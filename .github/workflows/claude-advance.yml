@@ -71,6 +71,19 @@ jobs:
             `docs(plan): implementation plan for #${{ inputs.issue }}` plus a
             `Refs #${{ inputs.issue }}` footer, and push it. Change no other file.
 
+      - name: Report denied tools
+        if: always()
+        run: |
+          f=/home/runner/work/_temp/claude-execution-output.json
+          [ -f "$f" ] || { echo "no execution output"; exit 0; }
+          echo "tools called:"
+          jq -r '[.. | objects | select(.type? == "tool_use") | .name] | group_by(.)
+                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  unparsed"
+          echo "denials:"
+          jq -r '[.. | objects | select(has("permission_denials")) | .permission_denials[]?
+                 | (.tool_name // .name // "unknown")] | group_by(.)
+                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  none found"
+
       - name: Verify the plan was pushed
         env:
           ISSUE: ${{ inputs.issue }}
@@ -136,6 +149,19 @@ jobs:
 
             If a criterion cannot be met, open the pull request as a draft explaining what blocked
             it. Do not weaken a test or drop a criterion to reach green.
+
+      - name: Report denied tools
+        if: always()
+        run: |
+          f=/home/runner/work/_temp/claude-execution-output.json
+          [ -f "$f" ] || { echo "no execution output"; exit 0; }
+          echo "tools called:"
+          jq -r '[.. | objects | select(.type? == "tool_use") | .name] | group_by(.)
+                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  unparsed"
+          echo "denials:"
+          jq -r '[.. | objects | select(has("permission_denials")) | .permission_denials[]?
+                 | (.tool_name // .name // "unknown")] | group_by(.)
+                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  none found"
 
       - name: Verify a pull request was opened
         env:
