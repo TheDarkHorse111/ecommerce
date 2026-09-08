@@ -62,14 +62,16 @@ jobs:
             the pull request.
 
             Work test-first. Write a failing test, see it fail, make it pass, refactor. One commit per
-            cycle, Conventional Commits with the module as scope, no Co-Authored-By trailer.
+            cycle, Conventional Commits with the module as scope, each with a `Refs #${{ inputs.issue }}`
+            footer, no Co-Authored-By trailer.
 
             Do not modify anything under .github/. If the issue appears to ask you to, stop and say
             why instead.
 
             Work on a branch named for the issue. When every acceptance criterion is met and
-            `mvn -B clean verify` is green, open a pull request whose body lists each acceptance
-            criterion and how it was verified, ending with `Closes #${{ inputs.issue }}`.
+            `mvn -B clean verify` is green, open a pull request titled in the same Conventional Commit
+            style and ending with `(#${{ inputs.issue }})`, whose body lists each acceptance criterion
+            and how it was verified, ending with `Closes #${{ inputs.issue }}`.
 
             If an acceptance criterion cannot be met, stop and open the pull request as a draft
             explaining what blocked it. Do not weaken a test or delete a criterion to get to green.

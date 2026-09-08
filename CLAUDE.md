@@ -60,6 +60,14 @@ therefore carries an explicit version, because no `pluginManagement` is inherite
 
 Conventional Commits with the module as the scope, for example
 `feat(catalog): add category tree with materialised path`. One commit per completed red-green-refactor
-cycle, so every commit is green.
+cycle, so every commit is green. Each commit carries a `Refs #N` footer naming the issue it belongs
+to.
 
-No `Co-Authored-By` trailer. No "Generated with Claude Code" footer. Close issues with `Closes #N`.
+The pull request title ends with the issue number, `feat(catalog): add category tree (#15)`, so the
+issue is traceable from the pull request list without opening anything. The body ends with
+`Closes #15`, which is what actually closes the issue on merge.
+
+Merge with rebase, never squash. Squashing collapses the per-cycle commits and appends the pull
+request number to the title a second time.
+
+No `Co-Authored-By` trailer. No "Generated with Claude Code" footer.
