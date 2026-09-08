@@ -25,7 +25,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools Bash(mvn *),Bash(git *),Bash(gh *)
+            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*)"
           prompt: |
             Review this pull request against CLAUDE.md and
             docs/superpowers/specs/2026-09-05-ecommerce-architecture-design.md.

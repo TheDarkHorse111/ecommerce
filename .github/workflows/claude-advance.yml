@@ -48,7 +48,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools Bash(mvn *),Bash(git *),Bash(gh *)
+            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*)"
           prompt: |
             Implement issue #${{ inputs.issue }} in this repository.
 
@@ -75,3 +75,17 @@ jobs:
 
             If an acceptance criterion cannot be met, stop and open the pull request as a draft
             explaining what blocked it. Do not weaken a test or delete a criterion to get to green.
+
+      - name: Verify a pull request was opened
+        env:
+          ISSUE: ${{ inputs.issue }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count=$(gh pr list --repo "$REPO" --state open --json body \
+            --jq '[.[] | select((.body // "") | test("Closes #" + env.ISSUE + "\\b"))] | length')
+          if [ "$count" -eq 0 ]; then
+            echo "run produced no pull request for issue #$ISSUE"
+            exit 1
+          fi
