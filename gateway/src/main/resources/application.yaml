@@ -4,7 +4,27 @@ server:
 spring:
   application:
     name: gateway
+  profiles:
+    active: local
+  config:
+    import: "configserver:"
   cloud:
+    stream:
+      binders:
+        bus:
+          type: kafka
+          environment:
+            spring:
+              cloud:
+                stream:
+                  kafka:
+                    binder:
+                      brokers: localhost:9092
+      bindings:
+        springCloudBusInput:
+          binder: bus
+        springCloudBusOutput:
+          binder: bus
     gateway:
       server:
         webmvc:
@@ -15,3 +35,12 @@ spring:
                 - Path=/catalog/**
               filters:
                 - StripPrefix=1
+
+management:
+  endpoint:
+    env:
+      show-values: ALWAYS
+  endpoints:
+    web:
+      exposure:
+        include: env

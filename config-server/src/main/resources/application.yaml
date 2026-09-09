@@ -10,3 +10,28 @@ spring:
         git:
           uri: https://github.com/TheDarkHorse111/ecommerce.git
           default-label: config
+        monitor:
+          github:
+            webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+    stream:
+      binders:
+        bus:
+          type: kafka
+          environment:
+            spring:
+              cloud:
+                stream:
+                  kafka:
+                    binder:
+                      brokers: localhost:9092
+      bindings:
+        springCloudBusInput:
+          binder: bus
+        springCloudBusOutput:
+          binder: bus
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: busrefresh
