@@ -39,6 +39,12 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '25'
+          cache: maven
+
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -46,7 +52,7 @@ jobs:
           plugins: ${{ env.PLUGIN }}
           claude_args: |
             --model opus
-            --allowedTools "Edit,Write,Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*)"
+            --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
           prompt: |
             Write the implementation plan for issue #${{ inputs.issue }}. Do not write production
             code in this job.
@@ -63,6 +69,13 @@ jobs:
 
             Every acceptance criterion in the issue must map to at least one task in the plan, and
             each task must state the failing test that comes first.
+
+            The issue was written before any of this was built, so treat its claims about how a tool
+            behaves as unverified. Where the plan would depend on such a claim and a command can
+            settle it, run that command in a scratch directory outside the repository and confirm it
+            before planning on top of it. A JDK and Maven are installed for this. If a claim turns
+            out to be false, plan against what you observed, say plainly in the plan which claim
+            failed and what the command showed, and delete the scratch directory before committing.
 
             Save the plan to docs/superpowers/plans/ following the skill's naming convention.
 

@@ -425,6 +425,10 @@ Every plugin carries an explicit version, because a BOM import supplies `depende
 
 Error Prone 2.50.0 runs as a javac plugin during compilation, so a finding fails the build rather than filling a report nobody reads. `error_prone_core` sits on the same `annotationProcessorPaths` as Lombok, the binding and MapStruct, because setting that path disables processor discovery on the classpath and anything missing from it stops running without saying so. A root `lombok.config` sets `lombok.addLombokGeneratedAnnotation = true` so that Error Prone does not report on generated accessors.
 
+A root `.mvn/jvm.config` carries the `--add-exports` and `--add-opens` flags that Error Prone documents for JDK 16 and above. `maven-compiler-plugin` compiles in Maven's own JVM rather than forking, so that JVM is the one whose `jdk.compiler` internals Error Prone needs open; without the file the compiler dies with `IllegalAccessError` on `com.sun.tools.javac.api.BasicJavacTask` before analysing anything. Forking the compiler and passing the same flags `-J`-prefixed is the alternative, and is rejected because it spawns a javac process per module for no gain.
+
+Severity is per bug pattern, not global. `SelfAssignment` is an error and fails the build, `ReferenceEquality` is a warning and does not. Findings are not promoted wholesale with `-Werror`, because the warning tier is where Error Prone puts checks with real false-positive rates.
+
 There is no separate lint step. `mvn verify` is the single gate.
 
 ## 7. Build order
