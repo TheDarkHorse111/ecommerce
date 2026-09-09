@@ -419,7 +419,7 @@ Because `spring-boot-starter-parent` is not the parent, nothing sets `-parameter
 
 Root `pluginManagement` declares `spring-boot-maven-plugin` with its `repackage` execution and `maven-compiler-plugin` with the annotation processor path. Each runnable module declares `spring-boot-maven-plugin` with no version or configuration; the root declares neither.
 
-Every plugin carries an explicit version, because a BOM import supplies `dependencyManagement` only and no `pluginManagement` is inherited. `maven-compiler-plugin` is pinned at 3.16.0; Maven 3.9.16 otherwise falls back to 3.13.0, which cannot compile against JDK 25.
+Every plugin carries an explicit version, because a BOM import supplies `dependencyManagement` only and no `pluginManagement` is inherited. `maven-compiler-plugin` is pinned at 3.16.0; Maven 3.9.16 otherwise falls back to 3.15.0.
 
 ### Static analysis
 

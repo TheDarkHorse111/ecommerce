@@ -93,6 +93,8 @@ jobs:
             `docs(plan): implementation plan for #${{ inputs.issue }}` plus a
             `Refs #${{ inputs.issue }}` footer, and push it. Change no other file.
 
+            The commit carries no Co-Authored-By trailer and no generated-with footer.
+
       - name: Report denied tools
         if: always()
         run: bash .github/report-denials.sh
@@ -163,7 +165,8 @@ jobs:
             When every acceptance criterion in issue #${{ inputs.issue }} is met and
             `mvn -B clean verify` is green, open a pull request titled in Conventional Commit style
             ending with `(#${{ inputs.issue }})`, whose body lists each acceptance criterion and how
-            it was verified, ending with `Closes #${{ inputs.issue }}`.
+            it was verified, ending with `Closes #${{ inputs.issue }}`. The body carries no
+            generated-with footer.
 
             If a criterion cannot be met, open the pull request as a draft explaining what blocked
             it. Do not weaken a test or drop a criterion to reach green.
