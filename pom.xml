@@ -13,6 +13,7 @@
         <module>discovery-server</module>
         <module>gateway</module>
         <module>config-server</module>
+        <module>catalog-service</module>
     </modules>
 
     <properties>
