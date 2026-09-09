@@ -10,6 +10,9 @@ spring:
         git:
           uri: https://github.com/TheDarkHorse111/ecommerce.git
           default-label: config
+        monitor:
+          github:
+            webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
     stream:
       binders:
         bus:
