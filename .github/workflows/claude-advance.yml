@@ -57,7 +57,7 @@ jobs:
           plugins: ${{ env.PLUGIN }}
           claude_args: |
             --model opus
-            --allowedTools "Edit,Write,WebFetch,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
+            --allowedTools "Edit,Write,WebFetch,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*),Bash(cd:*),Bash(grep:*),Bash(java:*),Bash(javap:*),Bash(printf:*),Bash(test:*),Bash(jar:*),Bash(unzip:*)"
           prompt: |
             Write the implementation plan for issue #${{ inputs.issue }}. Do not write production
             code in this job.
@@ -82,6 +82,10 @@ jobs:
 
             Scratch work goes in `.scratch/` at the repository root. File tools cannot write outside
             the workspace, so a path under /tmp is refused. Delete `.scratch/` before committing.
+
+            Only specific commands are permitted and `bash` is not one of them. Run a check as the
+            command itself rather than writing a shell script and invoking it, and prefer one command
+            per call over chaining several with `&&` or `;`.
 
             If a claim turns out to be false, plan against what you observed and say plainly in the
             plan which claim failed and what the command showed.
@@ -138,10 +142,9 @@ jobs:
           plugins: ${{ env.PLUGIN }}
           additional_permissions: |
             actions: read
-          show_full_output: true
           claude_args: |
             --model sonnet
-            --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
+            --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*),Bash(cd:*),Bash(grep:*),Bash(java:*),Bash(javap:*),Bash(printf:*),Bash(test:*),Bash(jar:*),Bash(unzip:*)"
           prompt: |
             Execute the plan in docs/superpowers/plans/ for issue #${{ inputs.issue }}. You are on
             branch `issue-${{ inputs.issue }}`, which already carries the plan.
@@ -161,6 +164,10 @@ jobs:
 
             Scratch work goes in `.scratch/` at the repository root, deleted before you commit. File
             tools cannot write outside the workspace, so a path under /tmp is refused.
+
+            Only specific commands are permitted and `bash` is not one of them. Run a check as the
+            command itself rather than writing a shell script and invoking it, and prefer one command
+            per call over chaining several with `&&` or `;`.
 
             When every acceptance criterion in issue #${{ inputs.issue }} is met and
             `mvn -B clean verify` is green, open a pull request titled in Conventional Commit style
@@ -233,7 +240,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --model opus
-            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*)"
+            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(cd:*),Bash(grep:*),Bash(javap:*)"
           prompt: |
             Read .github/review-criteria.md and review the pull request for issue
             #${{ inputs.issue }} by it. The change is `git diff master...HEAD` on branch
