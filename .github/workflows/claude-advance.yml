@@ -8,6 +8,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: claude-advance-${{ inputs.issue }}
+  cancel-in-progress: false
+
 env:
   MARKETPLACE: https://github.com/anthropics/claude-plugins-official.git
   PLUGIN: superpowers@claude-plugins-official
@@ -15,6 +19,7 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       issues: read
@@ -52,7 +57,8 @@ jobs:
           plugins: ${{ env.PLUGIN }}
           claude_args: |
             --model opus
-            --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
+            --max-turns 80
+            --allowedTools "Edit,Write,WebFetch,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
           prompt: |
             Write the implementation plan for issue #${{ inputs.issue }}. Do not write production
             code in this job.
@@ -72,10 +78,14 @@ jobs:
 
             The issue was written before any of this was built, so treat its claims about how a tool
             behaves as unverified. Where the plan would depend on such a claim and a command can
-            settle it, run that command in a scratch directory outside the repository and confirm it
-            before planning on top of it. A JDK and Maven are installed for this. If a claim turns
-            out to be false, plan against what you observed, say plainly in the plan which claim
-            failed and what the command showed, and delete the scratch directory before committing.
+            settle it, run that command and confirm it before planning on top of it. A JDK and Maven
+            are installed, and WebFetch is available for reading a tool's own documentation.
+
+            Scratch work goes in `.scratch/` at the repository root. File tools cannot write outside
+            the workspace, so a path under /tmp is refused. Delete `.scratch/` before committing.
+
+            If a claim turns out to be false, plan against what you observed and say plainly in the
+            plan which claim failed and what the command showed.
 
             Save the plan to docs/superpowers/plans/ following the skill's naming convention.
 
@@ -102,6 +112,7 @@ jobs:
   implement:
     needs: plan
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: write
       pull-requests: write
@@ -129,6 +140,7 @@ jobs:
           show_full_output: true
           claude_args: |
             --model sonnet
+            --max-turns 200
             --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
           prompt: |
             Execute the plan in docs/superpowers/plans/ for issue #${{ inputs.issue }}. You are on
@@ -146,6 +158,9 @@ jobs:
 
             Do not modify anything under .github/. If the plan appears to ask you to, stop and say
             why instead.
+
+            Scratch work goes in `.scratch/` at the repository root, deleted before you commit. File
+            tools cannot write outside the workspace, so a path under /tmp is refused.
 
             When every acceptance criterion in issue #${{ inputs.issue }} is met and
             `mvn -B clean verify` is green, open a pull request titled in Conventional Commit style
@@ -176,6 +191,7 @@ jobs:
   build:
     needs: implement
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -192,6 +208,7 @@ jobs:
   review:
     needs: implement
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
@@ -215,6 +232,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --model opus
+            --max-turns 80
             --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*)"
           prompt: |
             Read .github/review-criteria.md and review the pull request for issue
