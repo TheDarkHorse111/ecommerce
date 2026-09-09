@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: gateway
+  profiles:
+    active: local
+  config:
+    import: "configserver:"
   cloud:
     gateway:
       server:
@@ -15,3 +19,12 @@ spring:
                 - Path=/catalog/**
               filters:
                 - StripPrefix=1
+
+management:
+  endpoint:
+    env:
+      show-values: ALWAYS
+  endpoints:
+    web:
+      exposure:
+        include: env
