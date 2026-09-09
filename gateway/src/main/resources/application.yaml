@@ -9,6 +9,22 @@ spring:
   config:
     import: "configserver:"
   cloud:
+    stream:
+      binders:
+        bus:
+          type: kafka
+          environment:
+            spring:
+              cloud:
+                stream:
+                  kafka:
+                    binder:
+                      brokers: localhost:9092
+      bindings:
+        springCloudBusInput:
+          binder: bus
+        springCloudBusOutput:
+          binder: bus
     gateway:
       server:
         webmvc:
