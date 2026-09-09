@@ -9,7 +9,9 @@
     <packaging>pom</packaging>
     <name>ecommerce</name>
 
-    <modules/>
+    <modules>
+        <module>discovery-server</module>
+    </modules>
 
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
