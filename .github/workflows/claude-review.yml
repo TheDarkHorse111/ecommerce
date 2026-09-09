@@ -23,9 +23,17 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: claude
+          track_progress: true
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*)"
+            --allowedTools "Bash(mvn:*),Bash(git:*),Bash(gh:*),mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment"
           prompt: |
             Read .github/review-criteria.md and review this pull request by it.
+
+            Publish the review on the pull request, each finding as an inline comment on
+            the line it points at. Post nothing if nothing survives verification.
+
+      - name: Report denied tools
+        if: always()
+        run: bash .github/report-denials.sh
