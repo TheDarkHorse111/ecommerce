@@ -86,16 +86,7 @@ jobs:
 
       - name: Report denied tools
         if: always()
-        run: |
-          f=/home/runner/work/_temp/claude-execution-output.json
-          [ -f "$f" ] || { echo "no execution output"; exit 0; }
-          echo "tools called:"
-          jq -r '[.. | objects | select(.type? == "tool_use") | .name] | group_by(.)
-                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  unparsed"
-          echo "denials:"
-          jq -r '[.. | objects | select(has("permission_denials")) | .permission_denials[]?
-                 | (.tool_name // .name // "unknown")] | group_by(.)
-                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  none found"
+        run: bash .github/report-denials.sh
 
       - name: Verify the plan was pushed
         env:
@@ -135,6 +126,7 @@ jobs:
           plugins: ${{ env.PLUGIN }}
           additional_permissions: |
             actions: read
+          show_full_output: true
           claude_args: |
             --model sonnet
             --allowedTools "Edit,Write,Bash(mvn:*),Bash(git:*),Bash(gh:*),Bash(ls:*),Bash(cat:*),Bash(find:*),Bash(mkdir:*),Bash(mv:*),Bash(cp:*),Bash(rm:*)"
@@ -165,16 +157,7 @@ jobs:
 
       - name: Report denied tools
         if: always()
-        run: |
-          f=/home/runner/work/_temp/claude-execution-output.json
-          [ -f "$f" ] || { echo "no execution output"; exit 0; }
-          echo "tools called:"
-          jq -r '[.. | objects | select(.type? == "tool_use") | .name] | group_by(.)
-                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  unparsed"
-          echo "denials:"
-          jq -r '[.. | objects | select(has("permission_denials")) | .permission_denials[]?
-                 | (.tool_name // .name // "unknown")] | group_by(.)
-                 | map("\(length)\t\(.[0])") | .[]' "$f" 2>/dev/null || echo "  none found"
+        run: bash .github/report-denials.sh
 
       - name: Verify a pull request was opened
         env:
