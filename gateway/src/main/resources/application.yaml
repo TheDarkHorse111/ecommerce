@@ -13,13 +13,6 @@ spring:
       binders:
         bus:
           type: kafka
-          environment:
-            spring:
-              cloud:
-                stream:
-                  kafka:
-                    binder:
-                      brokers: localhost:9092
       bindings:
         springCloudBusInput:
           binder: bus
