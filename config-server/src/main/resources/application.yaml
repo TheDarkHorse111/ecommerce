@@ -8,8 +8,10 @@ spring:
     config:
       server:
         git:
-          uri: https://github.com/TheDarkHorse111/ecommerce.git
-          default-label: config
+          uri: https://github.com/TheDarkHorse111/ecommerce-config.git
+          default-label: master
+          username: ${CONFIG_GIT_USERNAME:}
+          password: ${CONFIG_GIT_TOKEN:}
         monitor:
           github:
             webhook-secret: ${GITHUB_WEBHOOK_SECRET:}

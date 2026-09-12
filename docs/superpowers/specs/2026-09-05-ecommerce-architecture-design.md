@@ -133,7 +133,9 @@ catalog-service-prod.yaml
 
 `/catalog-service/local` returns the four matching files merged, most specific winning. An application gets its own triplet only when it has a key the shared files cannot carry.
 
-What belongs here is configuration that is worth changing while the system is running: business values and operational values that turn out to be set wrong. Core wiring — port, datasource, Eureka registration — is not something the config server changes on the fly. Those values live in the repository too, but a change to one takes effect on the next restart, and that is the intent rather than a limitation.
+Configuration lives here, not in the modules. One managed and versioned place for it, separate from the code that reads it, is the reason the config server exists at all. A module keeps only what it needs before it can fetch anything — `spring.application.name`, `spring.profiles.active`, and the config server's own address — plus `config-server`'s own settings, which cannot come from itself, and the gateway routes, for the reason given above.
+
+Some of what lives here is also worth changing while the system is running, and that is a second benefit rather than the price of entry. Business values and operational values that turn out to be set wrong are worth a refresh. Core wiring — port, datasource, Eureka registration — takes effect on the next restart, and that is the intent rather than a limitation.
 
 Keys that differ between profiles are limited to addresses and verbosity: datasource URL and credentials, Eureka `defaultZone`, Keycloak issuer URI, Redis, Meilisearch and Redpanda hosts, log level, SQL echo. Everything else is shared.
 
