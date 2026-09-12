@@ -57,7 +57,8 @@ class CatalogExceptionHandlerTest {
     }
 
     @Test
-    void findsTheRejectedFieldAndItsReason() throws Exception {
+    void givenOneRejectedField_whenHandleMethodArgumentNotValid_thenItIsListedWithItsReason()
+            throws Exception {
         ResponseEntity<Object> response =
                 handle(rejecting(new FieldError(OBJECT_NAME, SLUG, BLANK_MESSAGE)));
 
@@ -67,7 +68,7 @@ class CatalogExceptionHandlerTest {
     }
 
     @Test
-    void findsBothRejectedFieldsWhenTwoFailAtOnce() throws Exception {
+    void givenTwoRejectedFields_whenHandleMethodArgumentNotValid_thenBothAreListed() throws Exception {
         ResponseEntity<Object> response =
                 handle(
                         rejecting(
@@ -81,7 +82,7 @@ class CatalogExceptionHandlerTest {
     }
 
     @Test
-    void findsConflictForADatabaseConstraintViolation() {
+    void givenAConstraintViolation_whenHandleDataIntegrityViolation_thenConflictHidesTheSql() {
         ProblemDetail body =
                 handler.handleDataIntegrityViolation(new DataIntegrityViolationException(SQL_MESSAGE));
 
@@ -91,7 +92,7 @@ class CatalogExceptionHandlerTest {
     }
 
     @Test
-    void findsServerErrorWithoutNamingTheCause() {
+    void givenAnUnexpectedException_whenHandleUnexpected_thenServerErrorHidesTheCause() {
         ProblemDetail body = handler.handleUnexpected(new IllegalStateException(SQL_MESSAGE));
 
         assertThat(body.getStatus()).isEqualTo(500);
