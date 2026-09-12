@@ -35,12 +35,3 @@ spring:
                 - Path=/catalog/**
               filters:
                 - StripPrefix=1
-
-management:
-  endpoint:
-    env:
-      show-values: ALWAYS
-  endpoints:
-    web:
-      exposure:
-        include: env
