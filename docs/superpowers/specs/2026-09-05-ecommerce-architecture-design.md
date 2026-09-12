@@ -405,6 +405,8 @@ Every service that publishes writes to its own `outbox` table inside the same tr
 
 Each service owns its own Docker Compose file. The shared Postgres container hosts one database per service.
 
+The broker is the exception and lives in a root Docker Compose file. Every service publishes to and consumes from the same one, so filing it under any single module would be arbitrary, and a module that only consumes events would still have to start a container declared somewhere else.
+
 Authentication is OAuth2 authorization code flow with PKCE against Keycloak. Services verify JWTs against Keycloak's JWKS endpoint and hold no session state. Customer profile fields beyond what Keycloak stores are not duplicated into a local user table.
 
 Errors are returned as RFC 7807 `ProblemDetail`.
