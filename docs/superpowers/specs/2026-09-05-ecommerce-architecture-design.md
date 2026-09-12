@@ -403,7 +403,9 @@ Every service that publishes writes to its own `outbox` table inside the same tr
 
 ## 6. Infrastructure
 
-Each service owns its own Docker Compose file. The shared Postgres container hosts one database per service.
+A Docker Compose file sits where its scope sits. A service owns a Compose file for what only that service uses: its own image, and any container no other service touches. Infrastructure every service shares runs as a single instance in the root Compose file, which is the broker today and Redis and Meilisearch when they arrive. There is no Redis per service.
+
+The shared Postgres container hosts one database per service, so it belongs in the root Compose file too.
 
 Authentication is OAuth2 authorization code flow with PKCE against Keycloak. Services verify JWTs against Keycloak's JWKS endpoint and hold no session state. Customer profile fields beyond what Keycloak stores are not duplicated into a local user table.
 
