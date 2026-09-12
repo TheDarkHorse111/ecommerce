@@ -41,6 +41,8 @@ appears only on entities and every layer above uses `String`.
 Test methods are named `givenContext_whenMethod_thenResult`, where the middle part is the method
 under test. The `find` prefix rule is about production lookups and does not reach test names.
 
+**Ordering.** Private methods come last, after every public, protected and package-private method.
+
 **Validation.** Constraints live on Request records only; entities carry none. Constraints guard
 shape. Integrity stays in the database, so uniqueness is a 409 and never a field error.
 
