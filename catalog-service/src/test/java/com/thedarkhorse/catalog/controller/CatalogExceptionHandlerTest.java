@@ -30,31 +30,6 @@ class CatalogExceptionHandlerTest {
 
     private final CatalogExceptionHandler handler = new CatalogExceptionHandler();
 
-    private MethodArgumentNotValidException rejecting(FieldError... fieldErrors) throws Exception {
-        MethodParameter parameter =
-                new MethodParameter(ValidationError.class.getDeclaredMethod("field"), -1);
-        BeanPropertyBindingResult bindingResult =
-                new BeanPropertyBindingResult(new Object(), OBJECT_NAME);
-        for (FieldError fieldError : fieldErrors) {
-            bindingResult.addError(fieldError);
-        }
-        return new MethodArgumentNotValidException(parameter, bindingResult);
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<ValidationError> errorsOf(ResponseEntity<Object> response) {
-        ProblemDetail body = (ProblemDetail) response.getBody();
-        return (List<ValidationError>) body.getProperties().get("errors");
-    }
-
-    private ResponseEntity<Object> handle(MethodArgumentNotValidException exception) {
-        return handler.handleMethodArgumentNotValid(
-                exception,
-                new HttpHeaders(),
-                HttpStatus.BAD_REQUEST,
-                new ServletWebRequest(new MockHttpServletRequest()));
-    }
-
     @Test
     void givenOneRejectedField_whenHandleMethodArgumentNotValid_thenItIsListedWithItsReason()
             throws Exception {
@@ -88,5 +63,30 @@ class CatalogExceptionHandlerTest {
         assertThat(body.getStatus()).isEqualTo(409);
         assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
         assertThat(body.getDetail()).doesNotContain(CONSTRAINT_NAME);
+    }
+
+    private MethodArgumentNotValidException rejecting(FieldError... fieldErrors) throws Exception {
+        MethodParameter parameter =
+                new MethodParameter(ValidationError.class.getDeclaredMethod("field"), -1);
+        BeanPropertyBindingResult bindingResult =
+                new BeanPropertyBindingResult(new Object(), OBJECT_NAME);
+        for (FieldError fieldError : fieldErrors) {
+            bindingResult.addError(fieldError);
+        }
+        return new MethodArgumentNotValidException(parameter, bindingResult);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ValidationError> errorsOf(ResponseEntity<Object> response) {
+        ProblemDetail body = (ProblemDetail) response.getBody();
+        return (List<ValidationError>) body.getProperties().get("errors");
+    }
+
+    private ResponseEntity<Object> handle(MethodArgumentNotValidException exception) {
+        return handler.handleMethodArgumentNotValid(
+                exception,
+                new HttpHeaders(),
+                HttpStatus.BAD_REQUEST,
+                new ServletWebRequest(new MockHttpServletRequest()));
     }
 }
