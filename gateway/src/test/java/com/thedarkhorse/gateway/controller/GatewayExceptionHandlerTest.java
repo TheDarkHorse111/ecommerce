@@ -14,7 +14,7 @@ class GatewayExceptionHandlerTest {
     private final GatewayExceptionHandler handler = new GatewayExceptionHandler();
 
     @Test
-    void findsTheStatusOfTheUpstreamFailure() {
+    void givenAnUpstreamFailure_whenHandleUpstreamFailure_thenItsStatusIsKept() {
         HttpServerErrorException exception =
                 new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE, NO_INSTANCE);
 
