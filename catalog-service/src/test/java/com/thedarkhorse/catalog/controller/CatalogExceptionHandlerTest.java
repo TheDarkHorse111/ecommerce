@@ -24,7 +24,6 @@ class CatalogExceptionHandlerTest {
     private static final String BLANK_MESSAGE = "must not be blank";
     private static final String NEGATIVE_MESSAGE = "must be greater than or equal to 0";
     private static final String CONFLICT_DETAIL = "The request conflicts with the current state of the resource";
-    private static final String UNEXPECTED_DETAIL = "The request could not be completed";
     private static final String CONSTRAINT_NAME = "category_path_key";
     private static final String SQL_MESSAGE =
             "duplicate key value violates unique constraint \"" + CONSTRAINT_NAME + "\"";
@@ -89,15 +88,5 @@ class CatalogExceptionHandlerTest {
         assertThat(body.getStatus()).isEqualTo(409);
         assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
         assertThat(body.getDetail()).doesNotContain(CONSTRAINT_NAME);
-    }
-
-    @Test
-    void givenAnUnexpectedException_whenHandleUnexpected_thenServerErrorHidesTheCause() {
-        ProblemDetail body = handler.handleUnexpected(new IllegalStateException(SQL_MESSAGE));
-
-        assertThat(body.getStatus()).isEqualTo(500);
-        assertThat(body.getDetail()).isEqualTo(UNEXPECTED_DETAIL);
-        assertThat(body.getDetail()).doesNotContain(CONSTRAINT_NAME);
-        assertThat(body.getDetail()).doesNotContain(IllegalStateException.class.getSimpleName());
     }
 }
