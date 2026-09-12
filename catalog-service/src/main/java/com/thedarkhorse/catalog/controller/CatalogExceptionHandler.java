@@ -18,6 +18,8 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     private static final String ERRORS = "errors";
     private static final String CONFLICT_DETAIL = "The request conflicts with the current state of the resource";
     private static final String CONFLICT_LOG = "Request rejected by a database constraint";
+    private static final String UNEXPECTED_DETAIL = "The request could not be completed";
+    private static final String UNEXPECTED_LOG = "Request failed unexpectedly";
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
@@ -38,5 +40,11 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException exception) {
         logger.warn(CONFLICT_LOG, exception);
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, CONFLICT_DETAIL);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ProblemDetail handleUnexpected(Exception exception) {
+        logger.error(UNEXPECTED_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_DETAIL);
     }
 }
