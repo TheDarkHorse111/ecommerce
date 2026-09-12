@@ -97,6 +97,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/ecommerce-config
+          token: ${{ secrets.CONFIG_REPO_TOKEN }}
+          path: .config-repo
+
       - uses: actions/setup-java@v6
         with:
           distribution: corretto
@@ -133,6 +139,11 @@ jobs:
             behaves as unverified. Where the plan would depend on such a claim and a command can
             settle it, run that command and confirm it before planning on top of it. A JDK and Maven
             are installed, and WebFetch is available for reading a tool's own documentation.
+
+            The configuration repository is checked out at `.config-repo`. It is a separate git
+            repository, on branch `master`, that the config server reads live, and spec section 3
+            `Configuration` decides which keys belong there rather than in a module. Read it when the
+            issue touches configuration, and plan the change to it as its own task naming the files.
 
             Scratch work goes in `.scratch/` at the repository root. File tools cannot write outside
             the workspace, so a path under /tmp is refused. Delete `.scratch/` before committing.
@@ -187,6 +198,12 @@ jobs:
         with:
           ref: issue-${{ matrix.issue }}
 
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/ecommerce-config
+          token: ${{ secrets.CONFIG_REPO_TOKEN }}
+          path: .config-repo
+
       - uses: actions/setup-java@v6
         with:
           distribution: corretto
@@ -220,6 +237,20 @@ jobs:
 
             Do not modify anything under .github/. If the plan appears to ask you to, stop and say
             why instead.
+
+            The configuration repository is checked out at `.config-repo`. It is a separate git
+            repository whose `master` branch the config server reads live, and spec section 3
+            `Configuration` decides which keys belong there rather than in a module. Drive it with
+            `git -C .config-repo` rather than changing directory, and never stage `.config-repo` into
+            this repository.
+
+            Never commit to its `master`. Put the change on a new branch `issue-${{ matrix.issue }}`
+            there, commit it alone with subject `chore(config): …` and a `Refs #${{ matrix.issue }}`
+            footer, and push that branch. Other issues run beside you against the same repository, so
+            a push to `master` would race them; `--force` is forbidden. Master is what the config
+            server serves, so an unmerged branch changes nothing that is running, and it lands when
+            this issue's pull request lands. Name the branch and the files it changes in the pull
+            request body.
 
             Scratch work goes in `.scratch/` at the repository root, deleted before you commit. File
             tools cannot write outside the workspace, so a path under /tmp is refused.
