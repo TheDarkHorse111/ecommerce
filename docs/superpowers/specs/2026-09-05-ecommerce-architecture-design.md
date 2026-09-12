@@ -411,9 +411,11 @@ Authentication is OAuth2 authorization code flow with PKCE against Keycloak. Ser
 
 Errors are returned as RFC 7807 `ProblemDetail`.
 
-Verified dependency pins: Spring Boot 4.1.0, Java 25, `spring-cloud-dependencies` 2025.1.2 exactly, Eureka server 5.0.2, the servlet/MVC gateway rather than the reactive one, MapStruct 1.6.3, Lombok 1.18.42. The annotation processor path lists Lombok before MapStruct.
+Every version lives in the root POM and none is repeated here, because a number written in two places drifts and the build reads only one of them. Read a resolved version with `mvn dependency:tree` rather than from prose. What belongs here is the reasoning the numbers do not carry.
 
-springdoc is 3.1.1; the 3.x line is the Spring Boot 4 line and 2.x stayed on Boot 3. `spring-boot-starter-validation` resolves Hibernate Validator 9.1.0.Final. Spring Cloud Bus is 5.0.2 and Config Monitor 5.0.4, both from the same train. Bus needs its own Kafka binder configuration, separate from the binder carrying domain events, because the Kafka starter forces byte-array serializers onto any binder it shares (`spring-cloud-bus` #267, #268).
+The gateway is the servlet and MVC one rather than the reactive one. The annotation processor path lists Lombok before MapStruct.
+
+springdoc comes from the 3.x line, because that is the Spring Boot 4 line and 2.x stayed on Boot 3. Spring Cloud Bus and Config Monitor come from the same train. Bus needs its own Kafka binder configuration, separate from the binder carrying domain events, because the Kafka starter forces byte-array serializers onto any binder it shares (`spring-cloud-bus` #267, #268).
 
 ### Root POM
 
@@ -423,11 +425,11 @@ Because `spring-boot-starter-parent` is not the parent, nothing sets `-parameter
 
 Root `pluginManagement` declares `spring-boot-maven-plugin` with its `repackage` execution and `maven-compiler-plugin` with the annotation processor path. Each runnable module declares `spring-boot-maven-plugin` with no version or configuration; the root declares neither.
 
-Every plugin carries an explicit version, because a BOM import supplies `dependencyManagement` only and no `pluginManagement` is inherited. `maven-compiler-plugin` is pinned at 3.16.0; Maven 3.9.16 otherwise falls back to 3.15.0.
+Every plugin carries an explicit version, because a BOM import supplies `dependencyManagement` only and no `pluginManagement` is inherited. `maven-compiler-plugin` needs pinning in particular: Maven 3.9.16 otherwise falls back to 3.15.0.
 
 ### Static analysis
 
-Error Prone 2.50.0 runs as a javac plugin during compilation, so a finding fails the build rather than filling a report nobody reads. `error_prone_core` sits on the same `annotationProcessorPaths` as Lombok, the binding and MapStruct, because setting that path disables processor discovery on the classpath and anything missing from it stops running without saying so. A root `lombok.config` sets `lombok.addLombokGeneratedAnnotation = true` so that Error Prone does not report on generated accessors.
+Error Prone runs as a javac plugin during compilation, so a finding fails the build rather than filling a report nobody reads. `error_prone_core` sits on the same `annotationProcessorPaths` as Lombok, the binding and MapStruct, because setting that path disables processor discovery on the classpath and anything missing from it stops running without saying so. A root `lombok.config` sets `lombok.addLombokGeneratedAnnotation = true` so that Error Prone does not report on generated accessors.
 
 A root `.mvn/jvm.config` carries the `--add-exports` and `--add-opens` flags that Error Prone documents for JDK 16 and above. `maven-compiler-plugin` compiles in Maven's own JVM rather than forking, so that JVM is the one whose `jdk.compiler` internals Error Prone needs open; without the file the compiler dies with `IllegalAccessError` on `com.sun.tools.javac.api.BasicJavacTask` before analysing anything. Forking the compiler and passing the same flags `-J`-prefixed is the alternative, and is rejected because it spawns a javac process per module for no gain.
 

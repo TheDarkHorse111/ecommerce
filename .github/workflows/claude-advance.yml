@@ -232,6 +232,12 @@ jobs:
             CLAUDE.md holds the standing rules and they are absolute. Write no class before a
             failing test for it has been seen to fail.
 
+            A claim about how a dependency behaves is usable only once a command has shown it. Read
+            the artifact in the local repository — `javap` on the class, `unzip` on the jar or its
+            sources jar, `mvn dependency:tree` for a resolved version — and name that command
+            wherever the claim is written down, including the pull request body. Recall about a
+            property name, a resolved version or a class hierarchy is not evidence.
+
             One commit per red-green-refactor cycle, Conventional Commits with the module as scope,
             each with a `Refs #${{ matrix.issue }}` footer, no Co-Authored-By trailer.
 
