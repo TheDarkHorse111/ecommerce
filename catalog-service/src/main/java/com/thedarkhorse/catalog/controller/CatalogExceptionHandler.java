@@ -23,6 +23,8 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     private static final String UNEXPECTED_DETAIL = "The request could not be completed";
     private static final String UNEXPECTED_LOG = "Request failed unexpectedly";
     private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
+    private static final String NOT_FOUND_LOG = "Request targeted a category that does not exist";
+    private static final String HAS_CHILDREN_LOG = "Request rejected because the category has descendants";
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
@@ -47,11 +49,13 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(CategoryNotFoundException.class)
     public ProblemDetail handleCategoryNotFound(CategoryNotFoundException exception) {
+        logger.warn(NOT_FOUND_LOG, exception);
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, NOT_FOUND_DETAIL);
     }
 
     @ExceptionHandler(CategoryHasChildrenException.class)
     public ProblemDetail handleCategoryHasChildren(CategoryHasChildrenException exception) {
+        logger.warn(HAS_CHILDREN_LOG, exception);
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, CONFLICT_DETAIL);
     }
 
