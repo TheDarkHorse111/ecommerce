@@ -1,5 +1,6 @@
 package com.thedarkhorse.catalog.controller;
 
+import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import org.jspecify.annotations.NonNull;
@@ -27,6 +28,7 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
     private static final String NOT_FOUND_LOG = "Request targeted a category that does not exist";
     private static final String HAS_CHILDREN_LOG = "Request rejected because the category has descendants";
+    private static final String CYCLE_LOG = "Request rejected because the move would create a cycle";
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
@@ -58,6 +60,12 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(CategoryHasChildrenException.class)
     public ProblemDetail handleCategoryHasChildren(CategoryHasChildrenException exception) {
         logger.warn(HAS_CHILDREN_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(CONFLICT, CONFLICT_DETAIL);
+    }
+
+    @ExceptionHandler(CategoryCycleException.class)
+    public ProblemDetail handleCategoryCycle(CategoryCycleException exception) {
+        logger.warn(CYCLE_LOG, exception);
         return ProblemDetail.forStatusAndDetail(CONFLICT, CONFLICT_DETAIL);
     }
 

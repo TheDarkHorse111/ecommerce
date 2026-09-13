@@ -1,5 +1,6 @@
 package com.thedarkhorse.catalog.service;
 
+import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
@@ -15,6 +16,7 @@ public class CategoryServiceImpl implements CategoryService {
     private static final String NOT_FOUND = "No category with id ";
     private static final String NOT_FOUND_PATH = "No category at path ";
     private static final String HAS_CHILDREN = "Category has descendants at path ";
+    private static final String CYCLE = "Category cannot move under its own descendant at path ";
     private static final int DEFAULT_SORT_ORDER = 0;
 
     private final CategoryRepository repository;
@@ -49,6 +51,9 @@ public class CategoryServiceImpl implements CategoryService {
         Category existing = findCategory(id);
         String oldPath = existing.getPath();
         String newPath = findPathUnder(category.getParentId(), category.getSlug());
+        if (newPath.startsWith(oldPath + SEPARATOR)) {
+            throw new CategoryCycleException(CYCLE + oldPath);
+        }
         if (!newPath.equals(oldPath)) {
             moveDescendants(oldPath, newPath);
         }

@@ -1,5 +1,6 @@
 package com.thedarkhorse.catalog.service;
 
+import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
@@ -228,6 +229,31 @@ class CategoryServiceImplTest {
                 MISSING_ID, new Category(null, null, PARENT_SLUG, null, 0, true));
         assertThatThrownBy(throwable)
                 .isInstanceOf(CategoryNotFoundException.class);
+    }
+
+    @Test
+    void givenADescendantAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(at(CHILD_PATH)));
+
+        ThrowingCallable throwable = () -> service.updateCategory(
+                PARENT_ID, new Category(null, CHILD_ID, PARENT_SLUG, null, 0, true));
+        assertThatThrownBy(throwable)
+                .isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    void givenItselfAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+
+        ThrowingCallable throwable = () -> service.updateCategory(
+                PARENT_ID, new Category(null, PARENT_ID, PARENT_SLUG, null, 0, true));
+        assertThatThrownBy(throwable)
+                .isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+        verify(repository, never()).saveAll(any());
     }
 
     private Category parent() {

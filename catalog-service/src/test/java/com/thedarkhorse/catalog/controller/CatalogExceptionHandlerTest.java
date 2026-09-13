@@ -1,5 +1,6 @@
 package com.thedarkhorse.catalog.controller;
 
+import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class CatalogExceptionHandlerTest {
     private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
     private static final String MISSING_MESSAGE = "No category at path mice";
     private static final String HAS_CHILDREN_MESSAGE = "Category has descendants at path keyboards";
+    private static final String CYCLE_MESSAGE = "Category cannot move under its own descendant at path keyboards";
 
     private final CatalogExceptionHandler handler = new CatalogExceptionHandler();
 
@@ -99,6 +101,15 @@ class CatalogExceptionHandlerTest {
 
         assertThat(body.getStatus()).isEqualTo(409);
         assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
+    }
+
+    @Test
+    void givenACycle_whenHandleCategoryCycle_thenConflict() {
+        ProblemDetail body = handler.handleCategoryCycle(new CategoryCycleException(CYCLE_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(409);
+        assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
+        assertThat(body.getDetail()).doesNotContain(CYCLE_MESSAGE);
     }
 
     private MethodArgumentNotValidException rejecting(FieldError... fieldErrors) throws Exception {
