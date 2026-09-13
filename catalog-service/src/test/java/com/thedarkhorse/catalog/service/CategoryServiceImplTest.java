@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,6 +25,10 @@ class CategoryServiceImplTest {
     private static final String CHILD_SLUG = "accessories";
     private static final String PARENT_PATH = "keyboards";
     private static final String CHILD_PATH = "keyboards/accessories";
+    private static final String GRANDCHILD_PATH = "keyboards/accessories/cables";
+    private static final String SIBLING_PATH = "keyboards-2";
+    private static final String DESCENDANT_PREFIX = "keyboards/";
+    private static final String MISSING_PATH = "mice";
 
     private final CategoryRepository repository = mock(CategoryRepository.class);
     private final CategoryServiceImpl service = new CategoryServiceImpl(repository);
@@ -75,7 +81,52 @@ class CategoryServiceImplTest {
         assertThat(captor.getValue().getId()).isNull();
     }
 
+    @Test
+    void givenANodeWithDescendants_whenFindSubtree_thenTheNodeComesFirstAndEveryDescendantFollows() {
+        when(repository.findByPath(PARENT_PATH)).thenReturn(Optional.of(parent()));
+        when(repository.findByPathStartingWith(DESCENDANT_PREFIX))
+                .thenReturn(List.of(at(CHILD_PATH), at(GRANDCHILD_PATH)));
+
+        List<Category> subtree = service.findSubtree(PARENT_PATH);
+
+        assertThat(subtree).extracting(Category::getPath)
+                .containsExactly(PARENT_PATH, CHILD_PATH, GRANDCHILD_PATH);
+    }
+
+    @Test
+    void givenALeaf_whenFindSubtree_thenOnlyTheNodeIsReturned() {
+        when(repository.findByPath(GRANDCHILD_PATH)).thenReturn(Optional.of(at(GRANDCHILD_PATH)));
+        when(repository.findByPathStartingWith(GRANDCHILD_PATH + "/")).thenReturn(List.of());
+
+        assertThat(service.findSubtree(GRANDCHILD_PATH)).extracting(Category::getPath)
+                .containsExactly(GRANDCHILD_PATH);
+    }
+
+    @Test
+    void givenASiblingSharingThePrefix_whenFindSubtree_thenTheSiblingIsNotADescendant() {
+        when(repository.findByPath(PARENT_PATH)).thenReturn(Optional.of(parent()));
+        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
+
+        List<Category> subtree = service.findSubtree(PARENT_PATH);
+
+        assertThat(subtree).extracting(Category::getPath).doesNotContain(SIBLING_PATH);
+        verify(repository).findByPathStartingWith(DESCENDANT_PREFIX);
+        verify(repository, never()).findByPathStartingWith(PARENT_PATH);
+    }
+
+    @Test
+    void givenAnUnknownPath_whenFindSubtree_thenCategoryNotFound() {
+        when(repository.findByPath(MISSING_PATH)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.findSubtree(MISSING_PATH))
+                .isInstanceOf(CategoryNotFoundException.class);
+    }
+
     private Category parent() {
         return new Category(PARENT_ID, null, PARENT_SLUG, PARENT_PATH, 0, true);
+    }
+
+    private Category at(String path) {
+        return new Category(CHILD_ID, PARENT_ID, CHILD_SLUG, path, 0, true);
     }
 }
