@@ -1,9 +1,9 @@
 package com.thedarkhorse.catalog.repository;
 
-import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.jpa.CategoryJpaRepository;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.model.Category;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;

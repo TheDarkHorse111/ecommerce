@@ -1,6 +1,7 @@
 package com.thedarkhorse.catalog.repository;
 
 import com.thedarkhorse.catalog.model.Category;
+
 import java.util.List;
 import java.util.Optional;
 

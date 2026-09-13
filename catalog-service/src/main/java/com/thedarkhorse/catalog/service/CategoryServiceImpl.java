@@ -4,9 +4,10 @@ import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.util.ArrayList;
 import java.util.List;
-import org.springframework.transaction.annotation.Transactional;
 
 public class CategoryServiceImpl implements CategoryService {
 

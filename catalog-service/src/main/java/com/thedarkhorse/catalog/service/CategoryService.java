@@ -1,6 +1,7 @@
 package com.thedarkhorse.catalog.service;
 
 import com.thedarkhorse.catalog.model.Category;
+
 import java.util.List;
 
 public interface CategoryService {

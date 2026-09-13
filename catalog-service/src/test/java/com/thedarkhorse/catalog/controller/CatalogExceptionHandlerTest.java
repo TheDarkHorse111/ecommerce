@@ -1,10 +1,7 @@
 package com.thedarkhorse.catalog.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -17,6 +14,10 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.ServletWebRequest;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 class CatalogExceptionHandlerTest {
 
@@ -43,6 +44,7 @@ class CatalogExceptionHandlerTest {
                 handle(rejecting(new FieldError(OBJECT_NAME, SLUG, BLANK_MESSAGE)));
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody()).isNotNull();
         assertThat(((ProblemDetail) response.getBody()).getStatus()).isEqualTo(400);
         assertThat(errorsOf(response)).containsExactly(new ValidationError(SLUG, BLANK_MESSAGE));
     }
@@ -113,6 +115,8 @@ class CatalogExceptionHandlerTest {
     @SuppressWarnings("unchecked")
     private List<ValidationError> errorsOf(ResponseEntity<Object> response) {
         ProblemDetail body = (ProblemDetail) response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.getProperties()).isNotNull();
         return (List<ValidationError>) body.getProperties().get("errors");
     }
 

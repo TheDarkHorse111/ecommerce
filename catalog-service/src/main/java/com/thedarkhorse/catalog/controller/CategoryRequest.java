@@ -9,4 +9,5 @@ public record CategoryRequest(
         String parentId,
         @NotBlank @Size(max = 100) @Pattern(regexp = "[a-z0-9-]+") String slug,
         @PositiveOrZero Integer sortOrder,
-        Boolean active) {}
+        Boolean active) {
+}

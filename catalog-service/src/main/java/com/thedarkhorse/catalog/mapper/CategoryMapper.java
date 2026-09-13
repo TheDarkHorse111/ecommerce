@@ -4,9 +4,10 @@ import com.thedarkhorse.catalog.controller.CategoryRequest;
 import com.thedarkhorse.catalog.controller.CategoryResponse;
 import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.model.Category;
-import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
+
+import java.util.List;
 
 @Mapper
 public interface CategoryMapper {

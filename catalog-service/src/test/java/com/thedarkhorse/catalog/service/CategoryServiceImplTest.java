@@ -1,21 +1,20 @@
 package com.thedarkhorse.catalog.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
-import java.util.List;
-import java.util.Optional;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 class CategoryServiceImplTest {
 
@@ -65,7 +64,8 @@ class CategoryServiceImplTest {
     void givenAnUnknownParent_whenCreateCategory_thenCategoryNotFound() {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.createCategory(new Category(null, MISSING_ID, CHILD_SLUG, null, 0, true)))
+        ThrowingCallable throwingCallable = () -> service.createCategory(new Category(null, MISSING_ID, CHILD_SLUG, null, 0, true));
+        assertThatThrownBy(throwingCallable)
                 .isInstanceOf(CategoryNotFoundException.class);
     }
 
@@ -107,7 +107,7 @@ class CategoryServiceImplTest {
 
         List<Category> subtree = service.findSubtree(PARENT_PATH);
 
-        assertThat(subtree).extracting(Category::getPath).doesNotContain(SIBLING_PATH);
+        assertThat(subtree).extracting(Category::getPath).isNotEmpty().doesNotContain(SIBLING_PATH);
         verify(repository).findByPathStartingWith(DESCENDANT_PREFIX);
         verify(repository, never()).findByPathStartingWith(PARENT_PATH);
     }
@@ -224,8 +224,9 @@ class CategoryServiceImplTest {
     void givenAnUnknownId_whenUpdateCategory_thenCategoryNotFound() {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateCategory(
-                        MISSING_ID, new Category(null, null, PARENT_SLUG, null, 0, true)))
+        ThrowingCallable throwable = () -> service.updateCategory(
+                MISSING_ID, new Category(null, null, PARENT_SLUG, null, 0, true));
+        assertThatThrownBy(throwable)
                 .isInstanceOf(CategoryNotFoundException.class);
     }
 

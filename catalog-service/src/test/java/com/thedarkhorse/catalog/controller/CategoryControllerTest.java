@@ -1,21 +1,20 @@
 package com.thedarkhorse.catalog.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.service.CategoryService;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 
 class CategoryControllerTest {
 
@@ -57,9 +56,11 @@ class CategoryControllerTest {
         ResponseEntity<CategoryResponse> response =
                 controller.createCategory(new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
+        CategoryResponse body = response.getBody();
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(response.getBody().id()).isEqualTo(ID);
-        assertThat(response.getBody().path()).isEqualTo(PATH);
+        assertThat(body).isNotNull();
+        assertThat(body.id()).isEqualTo(ID);
+        assertThat(body.path()).isEqualTo(PATH);
         ArgumentCaptor<Category> captor = ArgumentCaptor.forClass(Category.class);
         verify(service).createCategory(captor.capture());
         assertThat(captor.getValue().getParentId()).isEqualTo(PARENT_ID);
@@ -75,7 +76,9 @@ class CategoryControllerTest {
         ResponseEntity<CategoryResponse> response =
                 controller.updateCategory(ID, new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
-        assertThat(response.getBody().path()).isEqualTo(PATH);
+        CategoryResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.path()).isEqualTo(PATH);
         verify(service).updateCategory(eq(ID), any());
     }
 
