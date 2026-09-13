@@ -1,5 +1,7 @@
 package com.thedarkhorse.catalog.controller;
 
+import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
+import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -20,6 +22,7 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     private static final String CONFLICT_LOG = "Request rejected by a database constraint";
     private static final String UNEXPECTED_DETAIL = "The request could not be completed";
     private static final String UNEXPECTED_LOG = "Request failed unexpectedly";
+    private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
@@ -39,6 +42,16 @@ public class CatalogExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException exception) {
         logger.warn(CONFLICT_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, CONFLICT_DETAIL);
+    }
+
+    @ExceptionHandler(CategoryNotFoundException.class)
+    public ProblemDetail handleCategoryNotFound(CategoryNotFoundException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, NOT_FOUND_DETAIL);
+    }
+
+    @ExceptionHandler(CategoryHasChildrenException.class)
+    public ProblemDetail handleCategoryHasChildren(CategoryHasChildrenException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, CONFLICT_DETAIL);
     }
 

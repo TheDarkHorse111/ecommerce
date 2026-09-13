@@ -2,6 +2,8 @@ package com.thedarkhorse.catalog.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
+import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
@@ -28,6 +30,9 @@ class CatalogExceptionHandlerTest {
     private static final String CONSTRAINT_NAME = "category_path_key";
     private static final String SQL_MESSAGE =
             "duplicate key value violates unique constraint \"" + CONSTRAINT_NAME + "\"";
+    private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
+    private static final String MISSING_MESSAGE = "No category at path mice";
+    private static final String HAS_CHILDREN_MESSAGE = "Category has descendants at path keyboards";
 
     private final CatalogExceptionHandler handler = new CatalogExceptionHandler();
 
@@ -74,6 +79,24 @@ class CatalogExceptionHandlerTest {
         assertThat(body.getDetail()).isEqualTo(UNEXPECTED_DETAIL);
         assertThat(body.getDetail()).doesNotContain(CONSTRAINT_NAME);
         assertThat(body.getDetail()).doesNotContain(IllegalStateException.class.getSimpleName());
+    }
+
+    @Test
+    void givenAMissingCategory_whenHandleCategoryNotFound_thenNotFoundHidesTheLookup() {
+        ProblemDetail body = handler.handleCategoryNotFound(new CategoryNotFoundException(MISSING_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(404);
+        assertThat(body.getDetail()).isEqualTo(NOT_FOUND_DETAIL);
+        assertThat(body.getDetail()).doesNotContain(MISSING_MESSAGE);
+    }
+
+    @Test
+    void givenACategoryWithChildren_whenHandleCategoryHasChildren_thenConflict() {
+        ProblemDetail body =
+                handler.handleCategoryHasChildren(new CategoryHasChildrenException(HAS_CHILDREN_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(409);
+        assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
     }
 
     private MethodArgumentNotValidException rejecting(FieldError... fieldErrors) throws Exception {
