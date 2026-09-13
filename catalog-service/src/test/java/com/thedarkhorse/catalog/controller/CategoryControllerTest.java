@@ -14,6 +14,8 @@ import com.thedarkhorse.catalog.service.CategoryService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 class CategoryControllerTest {
 
@@ -33,9 +35,9 @@ class CategoryControllerTest {
     void givenACapturedPathWithALeadingSlash_whenFindSubtree_thenTheServiceIsCalledWithoutIt() {
         when(service.findSubtree(PATH)).thenReturn(List.of(model()));
 
-        List<CategoryResponse> responses = controller.findSubtree(CAPTURED_PATH);
+        ResponseEntity<List<CategoryResponse>> response = controller.findSubtree(CAPTURED_PATH);
 
-        assertThat(responses).extracting(CategoryResponse::path).containsExactly(PATH);
+        assertThat(response.getBody()).extracting(CategoryResponse::path).containsExactly(PATH);
         verify(service).findSubtree(PATH);
     }
 
@@ -52,11 +54,12 @@ class CategoryControllerTest {
     void givenARequest_whenCreateCategory_thenTheResponseCarriesTheStoredPath() {
         when(service.createCategory(any())).thenReturn(model());
 
-        CategoryResponse response =
+        ResponseEntity<CategoryResponse> response =
                 controller.createCategory(new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
-        assertThat(response.id()).isEqualTo(ID);
-        assertThat(response.path()).isEqualTo(PATH);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody().id()).isEqualTo(ID);
+        assertThat(response.getBody().path()).isEqualTo(PATH);
         ArgumentCaptor<Category> captor = ArgumentCaptor.forClass(Category.class);
         verify(service).createCategory(captor.capture());
         assertThat(captor.getValue().getParentId()).isEqualTo(PARENT_ID);
@@ -69,17 +72,18 @@ class CategoryControllerTest {
     void givenARequest_whenUpdateCategory_thenTheServiceReceivesTheIdAndTheModel() {
         when(service.updateCategory(eq(ID), any())).thenReturn(model());
 
-        CategoryResponse response =
+        ResponseEntity<CategoryResponse> response =
                 controller.updateCategory(ID, new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
-        assertThat(response.path()).isEqualTo(PATH);
+        assertThat(response.getBody().path()).isEqualTo(PATH);
         verify(service).updateCategory(eq(ID), any());
     }
 
     @Test
     void givenAnId_whenDeleteCategory_thenTheServiceReceivesIt() {
-        controller.deleteCategory(ID);
+        ResponseEntity<Void> response = controller.deleteCategory(ID);
 
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(service).deleteCategory(ID);
     }
 
