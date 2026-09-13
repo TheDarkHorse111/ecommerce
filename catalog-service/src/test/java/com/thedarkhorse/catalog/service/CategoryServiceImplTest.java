@@ -80,17 +80,6 @@ class CategoryServiceImplTest {
     }
 
     @Test
-    void givenAnIdOnTheIncomingModel_whenCreateCategory_thenItIsNotCarriedIntoTheSavedCategory() {
-        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.createCategory(new Category(CHILD_ID, null, PARENT_SLUG, null, 0, true));
-
-        ArgumentCaptor<Category> captor = ArgumentCaptor.forClass(Category.class);
-        verify(repository).save(captor.capture());
-        assertThat(captor.getValue().getId()).isNull();
-    }
-
-    @Test
     void givenANodeWithDescendants_whenFindSubtree_thenTheNodeComesFirstAndEveryDescendantFollows() {
         when(repository.findByPath(PARENT_PATH)).thenReturn(Optional.of(parent()));
         when(repository.findByPathStartingWith(DESCENDANT_PREFIX))

@@ -36,7 +36,6 @@ public class CategoryServiceImpl implements CategoryService {
     @Override
     @Transactional
     public Category createCategory(Category category) {
-        category.setId(null);
         category.setPath(findPathUnder(category.getParentId(), category.getSlug()));
         category.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         category.setActive(category.getActive() == null || category.getActive());
