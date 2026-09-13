@@ -45,6 +45,23 @@ public class CategoryServiceImpl implements CategoryService {
 
     @Override
     @Transactional
+    public Category updateCategory(String id, Category category) {
+        Category existing = findCategory(id);
+        String oldPath = existing.getPath();
+        String newPath = findPathUnder(category.getParentId(), category.getSlug());
+        if (!newPath.equals(oldPath)) {
+            moveDescendants(oldPath, newPath);
+        }
+        existing.setParentId(category.getParentId());
+        existing.setSlug(category.getSlug());
+        existing.setPath(newPath);
+        existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
+        existing.setActive(category.getActive() == null || category.getActive());
+        return repository.save(existing);
+    }
+
+    @Override
+    @Transactional
     public void deleteCategory(String id) {
         Category category = findCategory(id);
         if (!repository.findByPathStartingWith(category.getPath() + SEPARATOR).isEmpty()) {
@@ -62,5 +79,15 @@ public class CategoryServiceImpl implements CategoryService {
 
     private Category findCategory(String id) {
         return repository.findById(id).orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND + id));
+    }
+
+    private void moveDescendants(String oldPath, String newPath) {
+        List<Category> descendants = repository.findByPathStartingWith(oldPath + SEPARATOR);
+        if (descendants.isEmpty()) {
+            return;
+        }
+        descendants.forEach(descendant ->
+                descendant.setPath(newPath + descendant.getPath().substring(oldPath.length())));
+        repository.saveAll(descendants);
     }
 }
