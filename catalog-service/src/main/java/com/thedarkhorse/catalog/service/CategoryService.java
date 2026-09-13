@@ -8,4 +8,6 @@ public interface CategoryService {
     List<Category> findSubtree(String path);
 
     Category createCategory(Category category);
+
+    void deleteCategory(String id);
 }

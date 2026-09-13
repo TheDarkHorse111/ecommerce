@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
@@ -119,6 +120,34 @@ class CategoryServiceImplTest {
         when(repository.findByPath(MISSING_PATH)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.findSubtree(MISSING_PATH))
+                .isInstanceOf(CategoryNotFoundException.class);
+    }
+
+    @Test
+    void givenACategoryWithDescendants_whenDeleteCategory_thenCategoryHasChildren() {
+        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
+
+        assertThatThrownBy(() -> service.deleteCategory(PARENT_ID))
+                .isInstanceOf(CategoryHasChildrenException.class);
+        verify(repository, never()).deleteById(PARENT_ID);
+    }
+
+    @Test
+    void givenALeaf_whenDeleteCategory_thenItIsDeleted() {
+        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of());
+
+        service.deleteCategory(PARENT_ID);
+
+        verify(repository).deleteById(PARENT_ID);
+    }
+
+    @Test
+    void givenAnUnknownId_whenDeleteCategory_thenCategoryNotFound() {
+        when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deleteCategory(MISSING_ID))
                 .isInstanceOf(CategoryNotFoundException.class);
     }
 
