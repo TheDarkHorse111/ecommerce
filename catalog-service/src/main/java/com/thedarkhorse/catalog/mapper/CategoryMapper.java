@@ -1,0 +1,30 @@
+package com.thedarkhorse.catalog.mapper;
+
+import com.thedarkhorse.catalog.controller.CategoryRequest;
+import com.thedarkhorse.catalog.controller.CategoryResponse;
+import com.thedarkhorse.catalog.jpa.CategoryEntity;
+import com.thedarkhorse.catalog.model.Category;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+
+import java.util.List;
+
+@Mapper
+public interface CategoryMapper {
+
+    Category toModel(CategoryEntity entity);
+
+    List<Category> toModels(List<CategoryEntity> entities);
+
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    CategoryEntity toEntity(Category category);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "path", ignore = true)
+    Category toModel(CategoryRequest request);
+
+    CategoryResponse toResponse(Category category);
+
+    List<CategoryResponse> toResponses(List<Category> categories);
+}

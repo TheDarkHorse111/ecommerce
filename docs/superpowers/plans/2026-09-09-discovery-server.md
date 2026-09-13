@@ -1,14 +1,23 @@
 # discovery-server Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:
+> executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up `discovery-server`, a registry-only Eureka server on port 8761, as the first flat module under the parent POM built by issue #1.
+**Goal:** Stand up `discovery-server`, a registry-only Eureka server on port 8761, as the first flat module under the
+parent POM built by issue #1.
 
-**Architecture:** One Maven module, `discovery-server/`, parented by the root POM and listed in its `<modules>`. It has one dependency, `spring-cloud-starter-netflix-eureka-server`, one Java class carrying `@SpringBootApplication` and `@EnableEurekaServer`, and one `application.yaml` that sets the port and turns the embedded Eureka *client* off so the server registers with nobody and fetches nothing. There is no controller, service, repository or JPA layer, so the layering rules have nothing to bite on here.
+**Architecture:** One Maven module, `discovery-server/`, parented by the root POM and listed in its `<modules>`. It has
+one dependency, `spring-cloud-starter-netflix-eureka-server`, one Java class carrying `@SpringBootApplication` and
+`@EnableEurekaServer`, and one `application.yaml` that sets the port and turns the embedded Eureka *client* off so the
+server registers with nobody and fetches nothing. There is no controller, service, repository or JPA layer, so the
+layering rules have nothing to bite on here.
 
-**Tech Stack:** Java 25 (Amazon Corretto 25.0.4.1), Apache Maven 3.9.16, Spring Boot 4.1.0, Spring Cloud 2025.1.2, `spring-cloud-starter-netflix-eureka-server` 5.0.2, Error Prone 2.50.0, maven-compiler-plugin 3.16.0.
+**Tech Stack:** Java 25 (Amazon Corretto 25.0.4.1), Apache Maven 3.9.16, Spring Boot 4.1.0, Spring Cloud 2025.1.2,
+`spring-cloud-starter-netflix-eureka-server` 5.0.2, Error Prone 2.50.0, maven-compiler-plugin 3.16.0.
 
-**Spec:** `docs/superpowers/specs/2026-09-05-ecommerce-architecture-design.md` (section 3 service table, section 6 "Root POM" and "Static analysis", section 7 step 2). Issue #10 is the specification for this increment. Issue #1, already merged, is its dependency and is planned in `docs/superpowers/plans/2026-09-09-repository-restructure-parent-pom.md`.
+**Spec:** `docs/superpowers/specs/2026-09-05-ecommerce-architecture-design.md` (section 3 service table, section 6 "Root
+POM" and "Static analysis", section 7 step 2). Issue #10 is the specification for this increment. Issue #1, already
+merged, is its dependency and is planned in `docs/superpowers/plans/2026-09-09-repository-restructure-parent-pom.md`.
 
 ---
 
@@ -16,24 +25,44 @@
 
 Copied from `CLAUDE.md` and the spec. Every task's requirements implicitly include this section.
 
-- **Build gate:** `mvn -B clean verify` from the repository root is the only gate. There is no separate lint step. `.github/workflows/build.yml` runs exactly that on Corretto 25.
-- **Port:** 8761. **Package root:** `com.thedarkhorse.discovery`. **Module directory:** `discovery-server/`, flat at the repository root.
-- **Eureka:** `register-with-eureka: false`, `fetch-registry: false`. Registry only — this server registers with nobody and fetches nothing.
-- **Annotations.** `@Component`, `@Service` and `@Repository` are forbidden. `@RestController` and `@RestControllerAdvice` are the only stereotypes and are controller-layer only. This module has neither. `@SpringBootApplication` and `@EnableEurekaServer` are not stereotypes and are not covered by that ban.
-- **TDD.** No class is written before a failing test for it has been seen to fail. TDD applies to code with behaviour. This module contains no branch, loop, validation, orchestration, arithmetic or HTTP contract of our own writing, so per `CLAUDE.md` it gets **no JUnit test**, and `src/test/` is not created. Every red step below is a command whose observed failure is recorded verbatim. **Never test the framework** — do not write a `@SpringBootTest` asserting Eureka's own endpoints, and note the spec forbids a Spring context in tests outright.
-- **Comments.** None. No Javadoc, no comment blocks, and none in `pom.xml`, `application.yaml` or any properties file. Rationale lives in the spec and in this plan.
-- **Scope.** Build only what issue #10 asks for. In particular do **not** add `spring.application.name`, `eureka.instance.*`, `eureka.server.*`, an actuator dependency, `spring-boot-starter-validation`, a Dockerfile, a Compose file, or a `README`. None of them is requested. See "Deliberate omissions" below for the two the logs will tempt you into.
-- **Every plugin carries an explicit version** — but this module declares only `spring-boot-maven-plugin`, with no version and no configuration, because the root `pluginManagement` supplies both. That is the pattern the spec fixes for every runnable module.
-- **Conventional Commits** with `discovery` as the scope, one commit per completed red-green cycle, every commit green, each carrying a `Refs #10` footer. No `Co-Authored-By` trailer, no generated-with footer.
+- **Build gate:** `mvn -B clean verify` from the repository root is the only gate. There is no separate lint step.
+  `.github/workflows/build.yml` runs exactly that on Corretto 25.
+- **Port:** 8761. **Package root:** `com.thedarkhorse.discovery`. **Module directory:** `discovery-server/`, flat at the
+  repository root.
+- **Eureka:** `register-with-eureka: false`, `fetch-registry: false`. Registry only — this server registers with nobody
+  and fetches nothing.
+- **Annotations.** `@Component`, `@Service` and `@Repository` are forbidden. `@RestController` and
+  `@RestControllerAdvice` are the only stereotypes and are controller-layer only. This module has neither.
+  `@SpringBootApplication` and `@EnableEurekaServer` are not stereotypes and are not covered by that ban.
+- **TDD.** No class is written before a failing test for it has been seen to fail. TDD applies to code with behaviour.
+  This module contains no branch, loop, validation, orchestration, arithmetic or HTTP contract of our own writing, so
+  per `CLAUDE.md` it gets **no JUnit test**, and `src/test/` is not created. Every red step below is a command whose
+  observed failure is recorded verbatim. **Never test the framework** — do not write a `@SpringBootTest` asserting
+  Eureka's own endpoints, and note the spec forbids a Spring context in tests outright.
+- **Comments.** None. No Javadoc, no comment blocks, and none in `pom.xml`, `application.yaml` or any properties file.
+  Rationale lives in the spec and in this plan.
+- **Scope.** Build only what issue #10 asks for. In particular do **not** add `spring.application.name`,
+  `eureka.instance.*`, `eureka.server.*`, an actuator dependency, `spring-boot-starter-validation`, a Dockerfile, a
+  Compose file, or a `README`. None of them is requested. See "Deliberate omissions" below for the two the logs will
+  tempt you into.
+- **Every plugin carries an explicit version** — but this module declares only `spring-boot-maven-plugin`, with no
+  version and no configuration, because the root `pluginManagement` supplies both. That is the pattern the spec fixes
+  for every runnable module.
+- **Conventional Commits** with `discovery` as the scope, one commit per completed red-green cycle, every commit green,
+  each carrying a `Refs #10` footer. No `Co-Authored-By` trailer, no generated-with footer.
 - **Pull request** title ends `(#10)`; body ends `Closes #10`. Merge with rebase, never squash.
 
 ---
 
 ## Verified Findings
 
-Every claim issue #10 makes about tool behaviour was executed in this repository before planning on top of it, using a throwaway module at `.scratch/discovery-probe/` parented to the real root `pom.xml` by `<relativePath>` and never listed in `<modules>`. The probe was deleted afterwards.
+Every claim issue #10 makes about tool behaviour was executed in this repository before planning on top of it, using a
+throwaway module at `.scratch/discovery-probe/` parented to the real root `pom.xml` by `<relativePath>` and never listed
+in `<modules>`. The probe was deleted afterwards.
 
-**No claim in the issue turned out to be false.** All five acceptance criteria were reproduced. What follows are the four things the issue does not say that the plan depends on, and they are the reason several steps below look fussier than the criterion they serve.
+**No claim in the issue turned out to be false.** All five acceptance criteria were reproduced. What follows are the
+four things the issue does not say that the plan depends on, and they are the reason several steps below look fussier
+than the criterion they serve.
 
 ### Confirmed
 
@@ -48,11 +77,15 @@ Every claim issue #10 makes about tool behaviour was executed in this repository
       |  +- com.netflix.eureka:eureka-core-jersey3:jar:2.0.6:compile
    ```
 
-   No version is written in the module POM; `spring-cloud-dependencies` 2025.1.2 supplies it. The dashboard's FreeMarker templates and the web server arrive transitively — nothing extra is needed for the dashboard to render.
+   No version is written in the module POM; `spring-cloud-dependencies` 2025.1.2 supplies it. The dashboard's FreeMarker
+   templates and the web server arrive transitively — nothing extra is needed for the dashboard to render.
 
-2. **The module builds under the root parent and Error Prone runs on it.** `compiler:3.16.0:compile ... Compiling 1 source file with javac [debug parameters release 25]`. No `forked`, which is what the spec requires.
+2. **The module builds under the root parent and Error Prone runs on it.**
+   `compiler:3.16.0:compile ... Compiling 1 source file with javac [debug parameters release 25]`. No `forked`, which is
+   what the spec requires.
 
-3. **`spring-boot:repackage` fires from the inherited `pluginManagement` execution** when the module declares the plugin with no version and no configuration:
+3. **`spring-boot:repackage` fires from the inherited `pluginManagement` execution** when the module declares the plugin
+   with no version and no configuration:
 
    ```
    [INFO] --- spring-boot:4.1.0:repackage (default) @ discovery-probe ---
@@ -60,7 +93,8 @@ Every claim issue #10 makes about tool behaviour was executed in this repository
           adding nested dependencies in BOOT-INF/.
    ```
 
-4. **The configured server starts on 8761 and its registry is empty.** `Tomcat started on port 8761 (http) with context path '/'`, then `GET /eureka/apps`:
+4. **The configured server starts on 8761 and its registry is empty.**
+   `Tomcat started on port 8761 (http) with context path '/'`, then `GET /eureka/apps`:
 
    ```
    HTTP 200
@@ -71,9 +105,11 @@ Every claim issue #10 makes about tool behaviour was executed in this repository
    </applications>
    ```
 
-   With `Accept: application/json`: `{"applications":{"versions__delta":"1","apps__hashcode":"","application":[]}}`. XML is the default representation; the JSON form is the one that literally shows `"application":[]`.
+   With `Accept: application/json`: `{"applications":{"versions__delta":"1","apps__hashcode":"","application":[]}}`. XML
+   is the default representation; the JSON form is the one that literally shows `"application":[]`.
 
-5. **The dashboard renders.** `GET /` returns `HTTP 200`, `Content-Type: text/html;charset=UTF-8`, `<title>Eureka</title>`, and the instances table body reads `<tr><td colspan="4">No instances available</td></tr>`.
+5. **The dashboard renders.** `GET /` returns `HTTP 200`, `Content-Type: text/html;charset=UTF-8`,
+   `<title>Eureka</title>`, and the instances table body reads `<tr><td colspan="4">No instances available</td></tr>`.
 
 6. **`SelfAssignment` fails `mvn verify` in this module, and reverting it passes.**
 
@@ -86,13 +122,21 @@ Every claim issue #10 makes about tool behaviour was executed in this repository
 
    Deleting the file returned `BUILD SUCCESS`.
 
-7. **The root build configuration survives contact with its first real module.** `mvn help:evaluate -Dexpression=lombok.version` reports `null object or invalid expression` — the property genuinely is not defined, because importing a BOM brings `dependencyManagement` and not properties. The literal `${lombok.version}` in the root `annotationProcessorPaths` nevertheless works: maven-compiler-plugin 3.16.0 resolves an unresolvable processor-path version against `dependencyManagement`, which pins Lombok at 1.18.46. A `@Data` class added to the probe compiled and its generated accessors were callable. **No action.** This is recorded only because issue #10 says this module is the first to exercise issue #1's build configuration, and a reviewer who greps the root POM will otherwise think it is broken.
+7. **The root build configuration survives contact with its first real module.**
+   `mvn help:evaluate -Dexpression=lombok.version` reports `null object or invalid expression` — the property genuinely
+   is not defined, because importing a BOM brings `dependencyManagement` and not properties. The literal
+   `${lombok.version}` in the root `annotationProcessorPaths` nevertheless works: maven-compiler-plugin 3.16.0 resolves
+   an unresolvable processor-path version against `dependencyManagement`, which pins Lombok at 1.18.46. A `@Data` class
+   added to the probe compiled and its generated accessors were callable. **No action.** This is recorded only because
+   issue #10 says this module is the first to exercise issue #1's build configuration, and a reviewer who greps the root
+   POM will otherwise think it is broken.
 
 ### Four things the issue does not say
 
 **A. `@EnableEurekaServer` is mandatory, and omitting it breaks startup rather than the registry.**
 
-The issue's Design block names the starter and the two client flags but never mentions the annotation. With `@SpringBootApplication` alone the application does not start at all:
+The issue's Design block names the starter and the two client flags but never mentions the annotation. With
+`@SpringBootApplication` alone the application does not start at all:
 
 ```
 ERROR ... o.s.c.n.e.s.EurekaRegistration : error getting CloudEurekaClient
@@ -111,7 +155,8 @@ Caused by: java.lang.NullPointerException: Cannot invoke
 
 The process exits with code 1. Task 1 uses exactly this as its red.
 
-**B. `GET /eureka/apps` is served from a response cache that refreshes every 30 seconds, so checking it straight after startup proves nothing.**
+**B. `GET /eureka/apps` is served from a response cache that refreshes every 30 seconds, so checking it straight after
+startup proves nothing.**
 
 Eureka's read-only response cache is on by default. An instance whose registration the server logged as
 
@@ -119,11 +164,16 @@ Eureka's read-only response cache is on by default. An instance whose registrati
 c.n.e.registry.AbstractInstanceRegistry : Registered instance UNKNOWN/... with status UP (replication=false)
 ```
 
-was still absent from `GET /eureka/apps` on two consecutive polls afterwards and only appeared on a later one. The staleness runs one way only: a registry that is filling up still *reads* as empty. So a check taken at t+2s passes on a correctly configured server **and** on a broken one. **Every `/eureka/apps` check in this plan waits at least 40 seconds after startup**, which is why `Probe.java` below takes a settle argument.
+was still absent from `GET /eureka/apps` on two consecutive polls afterwards and only appeared on a later one. The
+staleness runs one way only: a registry that is filling up still *reads* as empty. So a check taken at t+2s passes on a
+correctly configured server **and** on a broken one. **Every `/eureka/apps` check in this plan waits at least 40 seconds
+after startup**, which is why `Probe.java` below takes a settle argument.
 
 **C. An empty `/eureka/apps` does not by itself prove `register-with-eureka: false`.**
 
-A build with no `application.yaml` at all — default `register-with-eureka: true`, default `defaultZone` of `http://localhost:8761/eureka/` — also returns an empty list after a 40-second settle, because with nothing listening on 8761 the self-registration simply fails:
+A build with no `application.yaml` at all — default `register-with-eureka: true`, default `defaultZone` of
+`http://localhost:8761/eureka/` — also returns an empty list after a 40-second settle, because with nothing listening on
+8761 the self-registration simply fails:
 
 ```
 DiscoveryClient_UNKNOWN/... : registering service...
@@ -133,7 +183,9 @@ INFO  DiscoveryClient_UNKNOWN/... - was unable to refresh its cache! This period
       will be retried in 30 seconds. status = Cannot execute request on any known server
 ```
 
-Task 2 therefore pairs the acceptance criterion with a log assertion: the configured server must log `Client configured to neither register nor query for data.` and must log neither `registering service...` nor `unable to refresh its cache`.
+Task 2 therefore pairs the acceptance criterion with a log assertion: the configured server must log
+`Client configured to neither register nor query for data.` and must log neither `registering service...` nor
+`unable to refresh its cache`.
 
 **D. One log line is a red herring.** Even correctly configured, the server logs
 
@@ -141,7 +193,11 @@ Task 2 therefore pairs the acceptance criterion with a log assertion: the config
 INFO  o.s.c.n.e.s.EurekaServiceRegistry : Registering application UNKNOWN with eureka with status UP
 ```
 
-and on shutdown `Unregistering application UNKNOWN with eureka with status DOWN`. No registration happens — the registry stays empty and the dashboard says "No instances available". `EurekaAutoServiceRegistration` flips the local instance status while the underlying client is configured not to talk to anyone. Do not chase this line, and do not add configuration to silence it. `UNKNOWN` is the application name because `spring.application.name` is not set, which is deliberate (see "Deliberate omissions").
+and on shutdown `Unregistering application UNKNOWN with eureka with status DOWN`. No registration happens — the registry
+stays empty and the dashboard says "No instances available". `EurekaAutoServiceRegistration` flips the local instance
+status while the underlying client is configured not to talk to anyone. Do not chase this line, and do not add
+configuration to silence it. `UNKNOWN` is the application name because `spring.application.name` is not set, which is
+deliberate (see "Deliberate omissions").
 
 ### Tooling constraint: there is no `curl` and no `wget`
 
@@ -154,16 +210,28 @@ Bash(test:*),Bash(jar:*),Bash(unzip:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash
 Bash(diff:*),Bash(echo:*),Bash(docker:*)
 ```
 
-No HTTP client is on it — neither `curl` nor `wget`. `Bash(java:*)` is, and Java's single-file source launcher runs a `.java` file directly, so **Task 2 Step 1 creates `.scratch/Probe.java` and every HTTP check in this plan runs through it.** That exact file was used for all the findings above.
+No HTTP client is on it — neither `curl` nor `wget`. `Bash(java:*)` is, and Java's single-file source launcher runs a
+`.java` file directly, so **Task 2 Step 1 creates `.scratch/Probe.java` and every HTTP check in this plan runs through
+it.** That exact file was used for all the findings above.
 
-Several checks in this plan need the server running while the check executes. Start the jar as a **background** Bash task and stop it with the harness's background-task stop when the task is done; `kill` and `pkill` are not on the allowlist. Only one server may hold 8761 at a time, so stop the previous one before starting the next.
+Several checks in this plan need the server running while the check executes. Start the jar as a **background** Bash
+task and stop it with the harness's background-task stop when the task is done; `kill` and `pkill` are not on the
+allowlist. Only one server may hold 8761 at a time, so stop the previous one before starting the next.
 
-When a background Bash task starts, the harness reports the file its output is being written to, for example `/tmp/.../tasks/bhjia4iwz.output`. Several steps below grep that file. They are written with `TASK_OUTPUT` standing in for it — **substitute the real path the harness printed**, because it is assigned per task and cannot be known in advance. `Bash(grep:*)`, `Bash(cat:*)` and `Bash(tail:*)` are all on the allowlist, so any of them reads it.
+When a background Bash task starts, the harness reports the file its output is being written to, for example
+`/tmp/.../tasks/bhjia4iwz.output`. Several steps below grep that file. They are written with `TASK_OUTPUT` standing in
+for it — **substitute the real path the harness printed**, because it is assigned per task and cannot be known in
+advance. `Bash(grep:*)`, `Bash(cat:*)` and `Bash(tail:*)` are all on the allowlist, so any of them reads it.
 
 ### Deliberate omissions
 
-- **`spring.application.name` is not set.** The issue does not ask for it, and `CLAUDE.md` forbids configuration knobs nobody requested. The cost is that the log and the misleading line in finding D read `UNKNOWN`. Nothing depends on the name: this server registers with no one, and the spec routes nothing to it through the gateway.
-- **No validation starter.** Startup logs `Failed to set up a Bean Validation provider: jakarta.validation.NoProviderFoundException`. It is a benign `INFO` from `OptionalValidatorFactoryBean`, the server starts and serves normally, and the spec scopes `spring-boot-starter-validation` to the API layer. Do not add it to make the line go away.
+- **`spring.application.name` is not set.** The issue does not ask for it, and `CLAUDE.md` forbids configuration knobs
+  nobody requested. The cost is that the log and the misleading line in finding D read `UNKNOWN`. Nothing depends on the
+  name: this server registers with no one, and the spec routes nothing to it through the gateway.
+- **No validation starter.** Startup logs
+  `Failed to set up a Bean Validation provider: jakarta.validation.NoProviderFoundException`. It is a benign `INFO` from
+  `OptionalValidatorFactoryBean`, the server starts and serves normally, and the spec scopes
+  `spring-boot-starter-validation` to the API layer. Do not add it to make the line go away.
 
 ---
 
@@ -171,42 +239,54 @@ When a background Bash task starts, the harness reports the file its output is b
 
 Committed by this plan:
 
-| Path | Responsibility | Action |
-| --- | --- | --- |
-| `pom.xml` | Root parent. Gains one `<module>discovery-server</module>` entry inside the currently empty `<modules/>`. Nothing else in it changes. | Modify |
-| `discovery-server/pom.xml` | Module coordinates, one dependency, one plugin declaration with no version and no configuration. | Create |
-| `discovery-server/src/main/java/com/thedarkhorse/discovery/DiscoveryServerApplication.java` | The whole application: `@SpringBootApplication`, `@EnableEurekaServer`, `main`. | Create |
-| `discovery-server/src/main/resources/application.yaml` | Port 8761, `register-with-eureka: false`, `fetch-registry: false`. | Create |
+| Path                                                                                        | Responsibility                                                                                                                        | Action |
+|---------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|--------|
+| `pom.xml`                                                                                   | Root parent. Gains one `<module>discovery-server</module>` entry inside the currently empty `<modules/>`. Nothing else in it changes. | Modify |
+| `discovery-server/pom.xml`                                                                  | Module coordinates, one dependency, one plugin declaration with no version and no configuration.                                      | Create |
+| `discovery-server/src/main/java/com/thedarkhorse/discovery/DiscoveryServerApplication.java` | The whole application: `@SpringBootApplication`, `@EnableEurekaServer`, `main`.                                                       | Create |
+| `discovery-server/src/main/resources/application.yaml`                                      | Port 8761, `register-with-eureka: false`, `fetch-registry: false`.                                                                    | Create |
 
-Not created: `discovery-server/src/test/`. There is no code with behaviour to test, and the spec forbids a Spring context in tests.
+Not created: `discovery-server/src/test/`. There is no code with behaviour to test, and the spec forbids a Spring
+context in tests.
 
 Not touched: `lombok.config`, `.mvn/jvm.config`, `.github/`, `CLAUDE.md`, `README.md`, the spec, and any other plan.
 
 Temporary, never committed:
 
-| Path | Responsibility |
-| --- | --- |
-| `.scratch/Probe.java` | The HTTP client, because the allowlist has none. Deleted in Task 3. |
+| Path                                                                      | Responsibility                                                                            |
+|---------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
+| `.scratch/Probe.java`                                                     | The HTTP client, because the allowlist has none. Deleted in Task 3.                       |
 | `discovery-server/src/main/java/com/thedarkhorse/discovery/Offender.java` | The deliberate Error Prone violation. Created and deleted inside Task 3, never committed. |
 
 ---
 
 ## Task 1: The module builds, and its jar starts as a Eureka server
 
-Covers acceptance criterion 4 (`mvn package` on this module produces a jar that runs with `java -jar`) and the "starts" half of criterion 1. The port itself is Task 2.
+Covers acceptance criterion 4 (`mvn package` on this module produces a jar that runs with `java -jar`) and the "starts"
+half of criterion 1. The port itself is Task 2.
 
 **Files:**
+
 - Modify: `pom.xml:12` — replace the self-closing `<modules/>` with a `<modules>` element containing one entry
 - Create: `discovery-server/pom.xml`
 - Create: `discovery-server/src/main/java/com/thedarkhorse/discovery/DiscoveryServerApplication.java`
 
 **Interfaces:**
-- Consumes: from issue #1, the parent coordinates `com.thedarkhorse:ecommerce:0.0.1-SNAPSHOT` with `pom` packaging; the `pluginManagement` entry for `org.springframework.boot:spring-boot-maven-plugin` carrying the `repackage` execution; the `spring-cloud-dependencies` 2025.1.2 BOM import that supplies the Eureka starter's version; `.mvn/jvm.config`, without which Error Prone cannot start.
-- Produces: the module artifact `com.thedarkhorse:discovery-server:0.0.1-SNAPSHOT`, whose repackaged jar is at `discovery-server/target/discovery-server-0.0.1-SNAPSHOT.jar`, and the class `com.thedarkhorse.discovery.DiscoveryServerApplication` with `public static void main(String[] args)`. Task 2 adds `discovery-server/src/main/resources/application.yaml` beside it and changes no Java. Task 3 adds and removes a second class in the same package.
+
+- Consumes: from issue #1, the parent coordinates `com.thedarkhorse:ecommerce:0.0.1-SNAPSHOT` with `pom` packaging; the
+  `pluginManagement` entry for `org.springframework.boot:spring-boot-maven-plugin` carrying the `repackage` execution;
+  the `spring-cloud-dependencies` 2025.1.2 BOM import that supplies the Eureka starter's version; `.mvn/jvm.config`,
+  without which Error Prone cannot start.
+- Produces: the module artifact `com.thedarkhorse:discovery-server:0.0.1-SNAPSHOT`, whose repackaged jar is at
+  `discovery-server/target/discovery-server-0.0.1-SNAPSHOT.jar`, and the class
+  `com.thedarkhorse.discovery.DiscoveryServerApplication` with `public static void main(String[] args)`. Task 2 adds
+  `discovery-server/src/main/resources/application.yaml` beside it and changes no Java. Task 3 adds and removes a second
+  class in the same package.
 
 - [ ] **Step 1: Write the failing test**
 
-There is no behaviour here, so per `CLAUDE.md` there is no JUnit test. The failing test is acceptance criterion 4 run as the command it describes. Run it against the repository as it stands:
+There is no behaviour here, so per `CLAUDE.md` there is no JUnit test. The failing test is acceptance criterion 4 run as
+the command it describes. Run it against the repository as it stands:
 
 ```bash
 mvn -B -pl discovery-server clean package
@@ -216,7 +296,8 @@ mvn -B -pl discovery-server clean package
 
 Run: `mvn -B -pl discovery-server clean package`
 
-Expected: a non-zero exit, because the module does not exist and is not in the reactor. Maven fails during project selection, before the reactor runs, so there is **no** `BUILD FAILURE` line — the whole output is:
+Expected: a non-zero exit, because the module does not exist and is not in the reactor. Maven fails during project
+selection, before the reactor runs, so there is **no** `BUILD FAILURE` line — the whole output is:
 
 ```
 [ERROR] [ERROR] Could not find the selected project in the reactor: discovery-server @
@@ -229,7 +310,8 @@ Confirm the reactor really is empty today:
 mvn -B clean verify
 ```
 
-Expected: `BUILD SUCCESS` with a single line `Building ecommerce 0.0.1-SNAPSHOT` and `--------[ pom ]--------`. No `discovery-server` appears. That is the red.
+Expected: `BUILD SUCCESS` with a single line `Building ecommerce 0.0.1-SNAPSHOT` and `--------[ pom ]--------`. No
+`discovery-server` appears. That is the red.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -249,7 +331,9 @@ with:
 
 Change nothing else in the root POM.
 
-Create `discovery-server/pom.xml`. No `<relativePath>` — a module in the reactor finds `../pom.xml` by default. No version on the plugin and no `<configuration>`; both come from the root `pluginManagement`. No version on the dependency; it comes from the Spring Cloud BOM. No comments.
+Create `discovery-server/pom.xml`. No `<relativePath>` — a module in the reactor finds `../pom.xml` by default. No
+version on the plugin and no `<configuration>`; both come from the root `pluginManagement`. No version on the
+dependency; it comes from the Spring Cloud BOM. No comments.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -284,7 +368,8 @@ Create `discovery-server/pom.xml`. No `<relativePath>` — a module in the react
 </project>
 ```
 
-Create `discovery-server/src/main/java/com/thedarkhorse/discovery/DiscoveryServerApplication.java`. Write it **without** `@EnableEurekaServer` for now — Step 5 is the red that earns that annotation.
+Create `discovery-server/src/main/java/com/thedarkhorse/discovery/DiscoveryServerApplication.java`. Write it **without**
+`@EnableEurekaServer` for now — Step 5 is the red that earns that annotation.
 
 ```java
 package com.thedarkhorse.discovery;
@@ -305,7 +390,8 @@ public class DiscoveryServerApplication {
 
 Run: `mvn -B -pl discovery-server clean package`
 
-Expected: `BUILD SUCCESS`, containing both of these lines. The second is the inherited `repackage` execution firing without the module naming it:
+Expected: `BUILD SUCCESS`, containing both of these lines. The second is the inherited `repackage` execution firing
+without the module naming it:
 
 ```
 [INFO] --- compiler:3.16.0:compile (default-compile) @ discovery-server ---
@@ -338,7 +424,8 @@ ERROR ... o.s.boot.SpringApplication : Application run failed
 org.springframework.context.ApplicationContextException: Failed to start bean 'eurekaAutoServiceRegistration'
 ```
 
-The jar exists and is a Boot jar, so half of criterion 4 holds; it does not run, so the criterion does not. That is the red for `@EnableEurekaServer`.
+The jar exists and is a Boot jar, so half of criterion 4 holds; it does not run, so the criterion does not. That is the
+red for `@EnableEurekaServer`.
 
 - [ ] **Step 6: Add `@EnableEurekaServer`**
 
@@ -381,9 +468,11 @@ INFO ... o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 8080 
 INFO ... c.t.d.DiscoveryServerApplication         : Started DiscoveryServerApplication in N seconds
 ```
 
-Port **8080** is correct at this point — there is no `application.yaml` yet, and that is Task 2's red. Criterion 4 is met: the jar runs.
+Port **8080** is correct at this point — there is no `application.yaml` yet, and that is Task 2's red. Criterion 4 is
+met: the jar runs.
 
-Expect two benign lines in the same output, both explained under "Deliberate omissions" and finding C. Do not act on either:
+Expect two benign lines in the same output, both explained under "Deliberate omissions" and finding C. Do not act on
+either:
 
 ```
 INFO ... o.s.v.b.OptionalValidatorFactoryBean : Failed to set up a Bean Validation provider: ...
@@ -404,7 +493,8 @@ Expected: `BUILD SUCCESS` with a reactor summary listing `ecommerce` and `discov
 git status --short
 ```
 
-Expected exactly: `M pom.xml`, `?? discovery-server/`. If `.scratch/` appears, that is fine — it is untracked and Task 3 deletes it. Nothing under `.github/` may appear.
+Expected exactly: `M pom.xml`, `?? discovery-server/`. If `.scratch/` appears, that is fine — it is untracked and Task 3
+deletes it. Nothing under `.github/` may appear.
 
 ```bash
 git add pom.xml discovery-server/pom.xml discovery-server/src
@@ -422,19 +512,29 @@ Confirm `discovery-server/target/` was not staged — the root `.gitignore` alre
 
 ## Task 2: Port 8761, registry only
 
-Covers acceptance criteria 1 (starts on 8761), 2 (`GET /eureka/apps` returns an empty application list) and 3 (the dashboard at `/` renders).
+Covers acceptance criteria 1 (starts on 8761), 2 (`GET /eureka/apps` returns an empty application list) and 3 (the
+dashboard at `/` renders).
 
 **Files:**
+
 - Create: `discovery-server/src/main/resources/application.yaml`
 - Create: `.scratch/Probe.java` (temporary, deleted in Task 3)
 
 **Interfaces:**
-- Consumes: from Task 1, the module `com.thedarkhorse:discovery-server:0.0.1-SNAPSHOT`, its jar at `discovery-server/target/discovery-server-0.0.1-SNAPSHOT.jar`, and `DiscoveryServerApplication` carrying `@SpringBootApplication` and `@EnableEurekaServer`.
-- Produces: a server listening on 8761 whose embedded Eureka client is off. No Java changes, so no later task consumes a new signature. `.scratch/Probe.java` exposes `Probe.main(String[])`, invoked as `java .scratch/Probe.java <url> [accept] [settleSeconds]`, and Task 3 deletes it.
+
+- Consumes: from Task 1, the module `com.thedarkhorse:discovery-server:0.0.1-SNAPSHOT`, its jar at
+  `discovery-server/target/discovery-server-0.0.1-SNAPSHOT.jar`, and `DiscoveryServerApplication` carrying
+  `@SpringBootApplication` and `@EnableEurekaServer`.
+- Produces: a server listening on 8761 whose embedded Eureka client is off. No Java changes, so no later task consumes a
+  new signature. `.scratch/Probe.java` exposes `Probe.main(String[])`, invoked as
+  `java .scratch/Probe.java <url> [accept] [settleSeconds]`, and Task 3 deletes it.
 
 - [ ] **Step 1: Write the failing test**
 
-Two pieces. First the HTTP client, because the allowlist has none. Create `.scratch/Probe.java` exactly as below. It retries the connection for up to two minutes so it can be launched before the server is up, then sleeps `settleSeconds` before the request it actually reports — that sleep is what makes the `/eureka/apps` check meaningful rather than vacuous (finding B).
+Two pieces. First the HTTP client, because the allowlist has none. Create `.scratch/Probe.java` exactly as below. It
+retries the connection for up to two minutes so it can be launched before the server is up, then sleeps `settleSeconds`
+before the request it actually reports — that sleep is what makes the `/eureka/apps` check meaningful rather than
+vacuous (finding B).
 
 ```java
 import java.io.IOException;
@@ -480,7 +580,8 @@ public class Probe {
 }
 ```
 
-`Probe.java` lives under `.scratch/` and is never committed. It carries no comments, consistent with the standing rule, and it is a throwaway harness rather than production code, so it needs no test of its own.
+`Probe.java` lives under `.scratch/` and is never committed. It carries no comments, consistent with the standing rule,
+and it is a throwaway harness rather than production code, so it needs no test of its own.
 
 Second, the check. Start the Task 1 jar as a **background** Bash task:
 
@@ -525,7 +626,8 @@ That is the red for all three of port, `register-with-eureka` and `fetch-registr
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Create `discovery-server/src/main/resources/application.yaml` with exactly this and nothing else. No comments. No `spring.application.name`, no `eureka.instance`, no `eureka.server`, no actuator exposure.
+Create `discovery-server/src/main/resources/application.yaml` with exactly this and nothing else. No comments. No
+`spring.application.name`, no `eureka.instance`, no `eureka.server`, no actuator exposure.
 
 ```yaml
 server:
@@ -564,19 +666,23 @@ INFO ... o.s.boot.tomcat.TomcatWebServer          : Tomcat started on port 8761 
 INFO ... c.t.d.DiscoveryServerApplication         : Started DiscoveryServerApplication in N seconds
 ```
 
-Then confirm the two red lines from Step 2 are gone, which is what proves the flags took effect rather than the registration merely failing (finding C):
+Then confirm the two red lines from Step 2 are gone, which is what proves the flags took effect rather than the
+registration merely failing (finding C):
 
 ```bash
 grep -cE 'registering service|unable to refresh its cache' TASK_OUTPUT
 ```
 
-Expected: it prints `0`. `grep -c` exits 1 when the count is zero, so a non-zero exit code here **is** the pass; read the printed number, not the exit status.
+Expected: it prints `0`. `grep -c` exits 1 when the count is zero, so a non-zero exit code here **is** the pass; read
+the printed number, not the exit status.
 
-Ignore `EurekaServiceRegistry : Registering application UNKNOWN with eureka with status UP`. It is the red herring documented in finding D; Step 5 and Step 6 are what actually settle whether anything is registered.
+Ignore `EurekaServiceRegistry : Registering application UNKNOWN with eureka with status UP`. It is the red herring
+documented in finding D; Step 5 and Step 6 are what actually settle whether anything is registered.
 
 - [ ] **Step 5: Run it to verify criterion 2 — the application list is empty**
 
-Leave the same background server running. The `40` argument is load-bearing: it holds the request until past Eureka's 30-second response-cache refresh, so an empty result means the registry is empty rather than merely not yet refreshed.
+Leave the same background server running. The `40` argument is load-bearing: it holds the request until past Eureka's
+30-second response-cache refresh, so an empty result means the registry is empty rather than merely not yet refreshed.
 
 ```bash
 java .scratch/Probe.java http://localhost:8761/eureka/apps application/json 40
@@ -617,7 +723,8 @@ Same background server.
 java .scratch/Probe.java http://localhost:8761/
 ```
 
-Expected: `HTTP 200`, `Content-Type: text/html;charset=UTF-8`, and a full HTML document. Confirm it is the Eureka dashboard and that it agrees with Step 5:
+Expected: `HTTP 200`, `Content-Type: text/html;charset=UTF-8`, and a full HTML document. Confirm it is the Eureka
+dashboard and that it agrees with Step 5:
 
 ```bash
 java .scratch/Probe.java http://localhost:8761/ | grep -E '<title>|Instances currently registered|No instances available'
@@ -631,9 +738,11 @@ Expected:
             <tr><td colspan="4">No instances available</td></tr>
 ```
 
-"No instances available" is the dashboard reading the registry directly, so it corroborates criterion 2 without going through the response cache.
+"No instances available" is the dashboard reading the registry directly, so it corroborates criterion 2 without going
+through the response cache.
 
-**Stop the background task.** Task 3 runs `mvn -B clean verify`, which does not need it, but leaving a process on 8761 will break any rerun of this task.
+**Stop the background task.** Task 3 runs `mvn -B clean verify`, which does not need it, but leaving a process on 8761
+will break any rerun of this task.
 
 - [ ] **Step 7: Confirm the full gate and commit**
 
@@ -663,21 +772,28 @@ EOF
 
 ## Task 3: The Error Prone gate bites on this module
 
-Covers acceptance criterion 5 (a deliberate error-severity Error Prone violation in this module fails `mvn verify`, and reverting it makes the build pass).
+Covers acceptance criterion 5 (a deliberate error-severity Error Prone violation in this module fails `mvn verify`, and
+reverting it makes the build pass).
 
-This task changes no committed file. Its deliverable is the observed red and green, plus a clean tree. It ends with **no commit**, which is consistent with "every commit is green" — there is nothing green to record.
+This task changes no committed file. Its deliverable is the observed red and green, plus a clean tree. It ends with **no
+commit**, which is consistent with "every commit is green" — there is nothing green to record.
 
 **Files:**
+
 - Create then delete: `discovery-server/src/main/java/com/thedarkhorse/discovery/Offender.java`
 - Delete: `.scratch/`
 
 **Interfaces:**
-- Consumes: from Task 1, the module in the reactor and the compiler configuration it inherits — `error_prone_core` 2.50.0 last on `annotationProcessorPaths`, the `-Xplugin:ErrorProne` compiler arguments, and `.mvn/jvm.config`, all from issue #1.
+
+- Consumes: from Task 1, the module in the reactor and the compiler configuration it inherits — `error_prone_core`
+  2.50.0 last on `annotationProcessorPaths`, the `-Xplugin:ErrorProne` compiler arguments, and `.mvn/jvm.config`, all
+  from issue #1.
 - Produces: nothing. No later task depends on this one.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `discovery-server/src/main/java/com/thedarkhorse/discovery/Offender.java`. `SelfAssignment` is the pattern issue #10 names, and it is error severity by default, so no `-Xep` promotion is needed and the root POM is not touched.
+Create `discovery-server/src/main/java/com/thedarkhorse/discovery/Offender.java`. `SelfAssignment` is the pattern issue
+#10 names, and it is error severity by default, so no `-Xep` promotion is needed and the root POM is not touched.
 
 ```java
 package com.thedarkhorse.discovery;
@@ -709,7 +825,10 @@ Expected: `BUILD FAILURE`, with the finding attributed to line 8 column 14 of th
         (default-compile) on project discovery-server: Compilation failure
 ```
 
-If instead the build fails with `java.lang.IllegalAccessError: class com.google.errorprone.BaseErrorProneJavaCompiler ... cannot access class com.sun.tools.javac.api.BasicJavacTask`, the fault is `.mvn/jvm.config` from issue #1, not this module. If the build *succeeds*, Error Prone is not running at all and the criterion has not been met — do not proceed.
+If instead the build fails with
+`java.lang.IllegalAccessError: class com.google.errorprone.BaseErrorProneJavaCompiler ... cannot access class com.sun.tools.javac.api.BasicJavacTask`,
+the fault is `.mvn/jvm.config` from issue #1, not this module. If the build *succeeds*, Error Prone is not running at
+all and the criterion has not been met — do not proceed.
 
 - [ ] **Step 3: Revert it**
 
@@ -732,7 +851,8 @@ rm -rf .scratch
 git status --short
 ```
 
-Expected: **no output at all**. No modified file, no untracked file. If `discovery-server/target/` appears, `.gitignore`'s `target/` rule is not matching and something changed it — investigate rather than adding a new ignore rule.
+Expected: **no output at all**. No modified file, no untracked file. If `discovery-server/target/` appears, `.gitignore`
+'s `target/` rule is not matching and something changed it — investigate rather than adding a new ignore rule.
 
 Confirm the whole issue touched only the four intended paths:
 
@@ -740,7 +860,8 @@ Confirm the whole issue touched only the four intended paths:
 git diff --stat master...HEAD
 ```
 
-Expected exactly five entries — the four files above plus this plan, which was committed onto `issue-10` before implementation began:
+Expected exactly five entries — the four files above plus this plan, which was committed onto `issue-10` before
+implementation began:
 
 ```
  docs/superpowers/plans/2026-09-09-discovery-server.md
@@ -762,15 +883,17 @@ Expected: `BUILD SUCCESS`. No commit — nothing changed in this task.
 
 ## Acceptance criteria coverage
 
-| # | Acceptance criterion from issue #10 | Task | Step | Red | Green |
-| --- | --- | --- | --- | --- | --- |
-| 1 | Starts on 8761 | 2 | 2.2, 2.4 | Tomcat on 8080, `Probe` gets `ConnectException` on 8761 | `Tomcat started on port 8761` |
-| 2 | `GET /eureka/apps` returns an empty application list | 2 | 2.2, 2.5 | Log shows `registering service...` and `unable to refresh its cache` | `"application":[]` after a 40 s settle, and `registering service` count is 0 |
-| 3 | The dashboard at `/` renders | 2 | 2.2, 2.6 | Nothing listening on 8761 | `HTTP 200`, `text/html`, `<title>Eureka</title>`, `No instances available` |
-| 4 | `mvn package` on this module produces a jar that runs with `java -jar` | 1 | 1.2, 1.5, 1.7 | `Could not find the selected project in the reactor`, then `Failed to start bean 'eurekaAutoServiceRegistration'` | repackaged jar, `Started DiscoveryServerApplication` |
-| 5 | A deliberate error-severity Error Prone violation fails `mvn verify`, and reverting it makes the build pass | 3 | 3.2, 3.4 | `[SelfAssignment] Variable assigned to itself` → `BUILD FAILURE` | `BUILD SUCCESS` after `rm` |
+| # | Acceptance criterion from issue #10                                                                         | Task | Step          | Red                                                                                                               | Green                                                                        |
+|---|-------------------------------------------------------------------------------------------------------------|------|---------------|-------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| 1 | Starts on 8761                                                                                              | 2    | 2.2, 2.4      | Tomcat on 8080, `Probe` gets `ConnectException` on 8761                                                           | `Tomcat started on port 8761`                                                |
+| 2 | `GET /eureka/apps` returns an empty application list                                                        | 2    | 2.2, 2.5      | Log shows `registering service...` and `unable to refresh its cache`                                              | `"application":[]` after a 40 s settle, and `registering service` count is 0 |
+| 3 | The dashboard at `/` renders                                                                                | 2    | 2.2, 2.6      | Nothing listening on 8761                                                                                         | `HTTP 200`, `text/html`, `<title>Eureka</title>`, `No instances available`   |
+| 4 | `mvn package` on this module produces a jar that runs with `java -jar`                                      | 1    | 1.2, 1.5, 1.7 | `Could not find the selected project in the reactor`, then `Failed to start bean 'eurekaAutoServiceRegistration'` | repackaged jar, `Started DiscoveryServerApplication`                         |
+| 5 | A deliberate error-severity Error Prone violation fails `mvn verify`, and reverting it makes the build pass | 3    | 3.2, 3.4      | `[SelfAssignment] Variable assigned to itself` → `BUILD FAILURE`                                                  | `BUILD SUCCESS` after `rm`                                                   |
 
-Criteria 1, 2 and 3 all land in Task 2 because they are three readings of one configuration change and a reviewer cannot sensibly accept one and reject another. Criterion 2 is deliberately not checked alone: findings B and C show it passes on a broken build too, so Step 2.5 is paired with the log assertion in Step 2.4.
+Criteria 1, 2 and 3 all land in Task 2 because they are three readings of one configuration change and a reviewer cannot
+sensibly accept one and reject another. Criterion 2 is deliberately not checked alone: findings B and C show it passes
+on a broken build too, so Step 2.5 is paired with the log assertion in Step 2.4.
 
 ---
 
@@ -778,11 +901,20 @@ Criteria 1, 2 and 3 all land in Task 2 because they are three readings of one co
 
 Title: `feat(discovery): add eureka discovery server on 8761 (#10)`
 
-Body lists each of the five acceptance criteria with the command and the output that verified it, and ends with `Closes #10`. Merge with rebase, never squash, so the two per-cycle commits survive.
+Body lists each of the five acceptance criteria with the command and the output that verified it, and ends with
+`Closes #10`. Merge with rebase, never squash, so the two per-cycle commits survive.
 
 The body should also carry the two findings a reviewer will otherwise trip over, since neither is in the issue:
 
-- `@EnableEurekaServer` is required. Without it the application does not start at all — `No qualifying bean of type TransportClientFactories` and `Failed to start bean 'eurekaAutoServiceRegistration'` — rather than starting without a registry.
-- `GET /eureka/apps` reads through Eureka's 30-second response cache, so the empty-registry check was taken 40 seconds after startup and paired with a log assertion. Checked immediately after startup it would have passed on a misconfigured server too.
+- `@EnableEurekaServer` is required. Without it the application does not start at all —
+  `No qualifying bean of type TransportClientFactories` and `Failed to start bean 'eurekaAutoServiceRegistration'` —
+  rather than starting without a registry.
+- `GET /eureka/apps` reads through Eureka's 30-second response cache, so the empty-registry check was taken 40 seconds
+  after startup and paired with a log assertion. Checked immediately after startup it would have passed on a
+  misconfigured server too.
 
-And the one line that looks like a defect and is not: the server logs `EurekaServiceRegistry : Registering application UNKNOWN with eureka with status UP` even though `register-with-eureka` is `false`. No registration occurs — `/eureka/apps` is empty and the dashboard reads "No instances available". The application name is `UNKNOWN` because `spring.application.name` is not set, which is deliberate: issue #10 does not ask for it and `CLAUDE.md` forbids unrequested configuration.
+And the one line that looks like a defect and is not: the server logs
+`EurekaServiceRegistry : Registering application UNKNOWN with eureka with status UP` even though `register-with-eureka`
+is `false`. No registration occurs — `/eureka/apps` is empty and the dashboard reads "No instances available". The
+application name is `UNKNOWN` because `spring.application.name` is not set, which is deliberate: issue #10 does not ask
+for it and `CLAUDE.md` forbids unrequested configuration.

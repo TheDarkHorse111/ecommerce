@@ -53,6 +53,11 @@ in the spec.
 **Scope.** Build only what the issue asks for. No helper classes, DTOs or configuration knobs that
 nobody requested.
 
+**Formatting.** IntelliJ IDEA defaults, applied by Reformat Code and Optimize Imports. Imports are
+grouped the IntelliJ way — project, then third party, then `java`/`javax`, then static — and collapse
+to a wildcard once the threshold is reached. Nothing in the build enforces this, so it is a
+convention, not a gate.
+
 ## Build
 
 Java 25, Maven. `mvn -B clean verify` is the only gate — Error Prone runs during compilation, so a
