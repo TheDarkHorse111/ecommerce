@@ -12,6 +12,7 @@ import java.util.List;
 @Mapper
 public interface CategoryMapper {
 
+    @Mapping(target = "path", ignore = true)
     Category toModel(CategoryEntity entity);
 
     List<Category> toModels(List<CategoryEntity> entities);

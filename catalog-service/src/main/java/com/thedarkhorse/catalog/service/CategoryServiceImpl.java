@@ -7,16 +7,21 @@ import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 public class CategoryServiceImpl implements CategoryService {
 
     private static final String SEPARATOR = "/";
+    private static final Pattern SEPARATOR_PATTERN = Pattern.compile(SEPARATOR);
     private static final String NOT_FOUND = "No category with id ";
     private static final String NOT_FOUND_PATH = "No category at path ";
-    private static final String HAS_CHILDREN = "Category has descendants at path ";
-    private static final String CYCLE = "Category cannot move under its own descendant at path ";
+    private static final String HAS_CHILDREN = "Category has children with id ";
+    private static final String CYCLE = "Category cannot move under its own descendant with id ";
     private static final int DEFAULT_SORT_ORDER = 0;
 
     private final CategoryRepository repository;
@@ -28,71 +33,86 @@ public class CategoryServiceImpl implements CategoryService {
     @Override
     @Transactional(readOnly = true)
     public List<Category> findSubtree(String path) {
-        Category node = repository.findByPath(path)
-                .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
-        List<Category> subtree = new ArrayList<>();
-        subtree.add(node);
-        subtree.addAll(repository.findByPathStartingWith(path + SEPARATOR));
-        return subtree;
+        Category node = findCategoryAt(path);
+        return withPaths(repository.findSubtree(node.getId()), path);
     }
 
     @Override
     @Transactional
     public Category createCategory(Category category) {
-        category.setPath(findPathUnder(category.getParentId(), category.getSlug()));
+        String path = findPathUnder(null, category.getParentId(), category.getSlug());
         category.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         category.setActive(category.getActive() == null || category.getActive());
-        return repository.save(category);
+        Category created = repository.save(category);
+        created.setPath(path);
+        return created;
     }
 
     @Override
     @Transactional
     public Category updateCategory(String id, Category category) {
         Category existing = findCategory(id);
-        String oldPath = existing.getPath();
-        String newPath = findPathUnder(category.getParentId(), category.getSlug());
-        if (newPath.startsWith(oldPath + SEPARATOR)) {
-            throw new CategoryCycleException(CYCLE + oldPath);
-        }
-        if (!newPath.equals(oldPath)) {
-            moveDescendants(oldPath, newPath);
-        }
+        String path = findPathUnder(id, category.getParentId(), category.getSlug());
         existing.setParentId(category.getParentId());
         existing.setSlug(category.getSlug());
-        existing.setPath(newPath);
         existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         existing.setActive(category.getActive() == null || category.getActive());
-        return repository.save(existing);
+        Category updated = repository.save(existing);
+        updated.setPath(path);
+        return updated;
     }
 
     @Override
     @Transactional
     public void deleteCategory(String id) {
         Category category = findCategory(id);
-        if (!repository.findByPathStartingWith(category.getPath() + SEPARATOR).isEmpty()) {
-            throw new CategoryHasChildrenException(HAS_CHILDREN + category.getPath());
+        if (repository.existsByParentId(category.getId())) {
+            throw new CategoryHasChildrenException(HAS_CHILDREN + category.getId());
         }
-        repository.deleteById(id);
-    }
-
-    private String findPathUnder(String parentId, String slug) {
-        if (parentId == null) {
-            return slug;
-        }
-        return findCategory(parentId).getPath() + SEPARATOR + slug;
+        repository.deleteById(category.getId());
     }
 
     private Category findCategory(String id) {
         return repository.findById(id).orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND + id));
     }
 
-    private void moveDescendants(String oldPath, String newPath) {
-        List<Category> descendants = repository.findByPathStartingWith(oldPath + SEPARATOR);
-        if (descendants.isEmpty()) {
-            return;
+    private Category findCategoryAt(String path) {
+        Category node = null;
+        String parentId = null;
+        for (String slug : SEPARATOR_PATTERN.split(path, -1)) {
+            node = repository.findByParentIdAndSlug(parentId, slug)
+                    .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
+            parentId = node.getId();
         }
-        descendants.forEach(descendant ->
-                descendant.setPath(newPath + descendant.getPath().substring(oldPath.length())));
-        repository.saveAll(descendants);
+        if (node == null) {
+            throw new CategoryNotFoundException(NOT_FOUND_PATH + path);
+        }
+        return node;
+    }
+
+    private String findPathUnder(String movingId, String parentId, String slug) {
+        Deque<String> slugs = new ArrayDeque<>();
+        slugs.addFirst(slug);
+        String ancestorId = parentId;
+        while (ancestorId != null) {
+            if (ancestorId.equals(movingId)) {
+                throw new CategoryCycleException(CYCLE + movingId);
+            }
+            Category ancestor = findCategory(ancestorId);
+            slugs.addFirst(ancestor.getSlug());
+            ancestorId = ancestor.getParentId();
+        }
+        return String.join(SEPARATOR, slugs);
+    }
+
+    private List<Category> withPaths(List<Category> subtree, String rootPath) {
+        Map<String, String> paths = new HashMap<>();
+        subtree.forEach(category -> {
+            String parentPath = paths.get(category.getParentId());
+            String path = parentPath == null ? rootPath : parentPath + SEPARATOR + category.getSlug();
+            paths.put(category.getId(), path);
+            category.setPath(path);
+        });
+        return subtree;
     }
 }

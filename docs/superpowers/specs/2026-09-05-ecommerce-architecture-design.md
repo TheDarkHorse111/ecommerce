@@ -28,8 +28,19 @@ cannot be constructed by hand.
 
 ### Queries
 
-No raw query text in Java. No `@Query`, no native SQL strings, no Criteria string fragments. Only Spring Data derived
-query methods. Raw SQL is allowed and expected inside Flyway migration files.
+Spring Data derived query methods are the default and are used wherever they can express the query. A derived method
+that exists is always preferred to an equivalent `@Query`, so that the method name stays the contract and renaming a
+field stays safe.
+
+`@Query` is allowed only where a derived method cannot express the query. Its text is standard JPQL and never a provider
+extension. Hibernate accepts HQL in that position and nothing fails the build, so this is a review rule rather than a
+compiler one, and it is what keeps the persistence layer portable across JPA providers.
+
+JPQL has no syntax for a recursive CTE, a set operation or a window function. Those carry `nativeQuery = true` and are
+written in ANSI SQL where ANSI has the construct, because a recursive CTE is SQL-99 and runs unchanged on every database
+worth targeting, whereas HQL runs only on Hibernate. The concrete database is already fixed by the Flyway migrations.
+
+No Criteria string fragments. Raw SQL is allowed and expected inside Flyway migration files.
 
 ### Layering
 
@@ -246,7 +257,6 @@ category (
   id          uuid primary key,
   parent_id   uuid null references category(id) on delete restrict,
   slug        varchar(100) not null,          -- Latin only
-  path        varchar(500) not null unique,   -- materialised path, e.g. keyboards/accessories
   sort_order  int not null default 0,
   active      boolean not null default true,
   created_at, created_by, updated_at, updated_by,
@@ -254,8 +264,15 @@ category (
 )
 ```
 
-`path` exists so that a subtree query is a single `like 'keyboards/%'` instead of recursion. `nulls not distinct` is
-what makes the unique constraint apply to root categories, whose `parent_id` is null.
+`parent_id` is the only representation of the tree. There is no materialised path column, because a path is a copy of
+`parent_id` that the database cannot enforce: every write has to keep the two in agreement by hand, and a rename that
+touches nothing structural still rewrites a row per descendant. A move is a single-row update and a rename is a
+single-row update, both of which the foreign key already guards.
+
+A subtree is read with one recursive CTE seeded on the node id. The path a client sees is rebuilt from the parent chain
+in the service and never stored, so it costs nothing to change a slug. `nulls not distinct` is what makes the unique
+constraint apply to root categories, whose `parent_id` is null, and the same index resolves a URL segment by
+`(parent_id, slug)` and answers the `on delete restrict` check, so no separate index on `parent_id` is needed.
 
 ```sql
 translation (
