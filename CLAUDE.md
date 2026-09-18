@@ -20,8 +20,10 @@ framework.
 `@Bean` method in an `@Configuration` class. Spring Data JPA repository interfaces are the one
 exception, because Spring generates their implementations.
 
-**Queries.** No raw query text in Java. No `@Query`, no native SQL strings, no Criteria fragments.
-Only Spring Data derived query methods. Raw SQL belongs in Flyway migrations.
+**Queries.** Spring Data derived query methods are the default and are used wherever they can
+express the query. `@Query` is allowed only where a derived method cannot express it, for example a
+recursive CTE, a set operation or a window function. Prefer JPQL; `nativeQuery = true` only when JPQL
+cannot express it either. No Criteria string fragments. Raw SQL belongs in Flyway migrations.
 
 **Layering.** `controller → service → repository → jpa`. The controller speaks Request and Response
 records, the service speaks models, the repository returns models, the jpa layer owns entities.

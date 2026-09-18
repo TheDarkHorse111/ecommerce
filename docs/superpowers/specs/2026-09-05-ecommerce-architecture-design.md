@@ -22,7 +22,7 @@ Spring Data JPA repository interfaces are the one exception, because Spring gene
 
 ### Queries
 
-No raw query text in Java. No `@Query`, no native SQL strings, no Criteria string fragments. Only Spring Data derived query methods. Raw SQL is allowed and expected inside Flyway migration files.
+Spring Data derived query methods are the default and are used wherever they can express the query. `@Query` is allowed only where a derived method cannot express it, for example a recursive CTE, a set operation or a window function. A derived method that exists is always preferred to an equivalent `@Query`, so that the method name stays the contract and refactoring stays safe. Prefer JPQL; `nativeQuery = true` only when JPQL cannot express it either. No Criteria string fragments. Raw SQL is allowed and expected inside Flyway migration files.
 
 ### Layering
 
