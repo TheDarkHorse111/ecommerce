@@ -14,15 +14,17 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class CategoryRepositoryImplTest {
 
     private static final UUID ID = UUID.fromString("01920000-0000-7000-8000-000000000001");
     private static final UUID PARENT_ID = UUID.fromString("01920000-0000-7000-8000-000000000002");
     private static final String SLUG = "accessories";
-    private static final String PATH = "keyboards/accessories";
-    private static final String DESCENDANT_PREFIX = "keyboards/";
+    private static final String ROOT_SLUG = "keyboards";
     private static final int SORT_ORDER = 3;
 
     private final CategoryJpaRepository jpaRepository = mock(CategoryJpaRepository.class);
@@ -30,44 +32,68 @@ class CategoryRepositoryImplTest {
     private final CategoryRepositoryImpl repository = new CategoryRepositoryImpl(jpaRepository, mapper);
 
     @Test
-    void givenAStoredEntity_whenFindByPath_thenTheModelCarriesTheIdsAsStrings() {
-        when(jpaRepository.findByPath(PATH)).thenReturn(Optional.of(entity()));
+    void givenAStoredEntity_whenFindById_thenTheModelCarriesTheIdsAsStrings() {
+        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
 
-        Optional<Category> found = repository.findByPath(PATH);
+        Optional<Category> found = repository.findById(ID.toString());
 
         assertThat(found).isPresent();
         assertThat(found.get().getId()).isEqualTo(ID.toString());
         assertThat(found.get().getParentId()).isEqualTo(PARENT_ID.toString());
         assertThat(found.get().getSlug()).isEqualTo(SLUG);
-        assertThat(found.get().getPath()).isEqualTo(PATH);
         assertThat(found.get().getSortOrder()).isEqualTo(SORT_ORDER);
         assertThat(found.get().getActive()).isTrue();
-    }
-
-    @Test
-    void givenNoRow_whenFindByPath_thenEmpty() {
-        when(jpaRepository.findByPath(PATH)).thenReturn(Optional.empty());
-
-        assertThat(repository.findByPath(PATH)).isEmpty();
-    }
-
-    @Test
-    void givenAStringId_whenFindById_thenTheJpaRepositoryIsCalledWithTheUuid() {
-        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
-
-        assertThat(repository.findById(ID.toString())).isPresent();
         verify(jpaRepository).findById(ID);
     }
 
     @Test
-    void givenAPrefix_whenFindByPathStartingWith_thenTheOrderedDerivedQueryIsUsed() {
-        when(jpaRepository.findByPathStartingWithOrderByPathAsc(DESCENDANT_PREFIX))
-                .thenReturn(List.of(entity()));
+    void givenAStoredEntity_whenFindById_thenThePathIsLeftForTheServiceToBuild() {
+        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
 
-        List<Category> found = repository.findByPathStartingWith(DESCENDANT_PREFIX);
+        assertThat(repository.findById(ID.toString()).orElseThrow().getPath()).isNull();
+    }
 
-        assertThat(found).extracting(Category::getPath).containsExactly(PATH);
-        verify(jpaRepository).findByPathStartingWithOrderByPathAsc(DESCENDANT_PREFIX);
+    @Test
+    void givenNoParentId_whenFindByParentIdAndSlug_thenTheNullSafeDerivedQueryIsUsed() {
+        when(jpaRepository.findByParentIdIsNullAndSlug(ROOT_SLUG)).thenReturn(Optional.of(entity()));
+
+        assertThat(repository.findByParentIdAndSlug(null, ROOT_SLUG)).isPresent();
+        verify(jpaRepository).findByParentIdIsNullAndSlug(ROOT_SLUG);
+        verify(jpaRepository, never()).findByParentIdAndSlug(any(), any());
+    }
+
+    @Test
+    void givenAParentId_whenFindByParentIdAndSlug_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.findByParentIdAndSlug(PARENT_ID, SLUG)).thenReturn(Optional.of(entity()));
+
+        assertThat(repository.findByParentIdAndSlug(PARENT_ID.toString(), SLUG)).isPresent();
+        verify(jpaRepository).findByParentIdAndSlug(PARENT_ID, SLUG);
+        verify(jpaRepository, never()).findByParentIdIsNullAndSlug(any());
+    }
+
+    @Test
+    void givenNoRow_whenFindByParentIdAndSlug_thenEmpty() {
+        when(jpaRepository.findByParentIdAndSlug(PARENT_ID, SLUG)).thenReturn(Optional.empty());
+
+        assertThat(repository.findByParentIdAndSlug(PARENT_ID.toString(), SLUG)).isEmpty();
+    }
+
+    @Test
+    void givenANodeId_whenFindSubtree_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.findSubtree(ID)).thenReturn(List.of(entity()));
+
+        List<Category> subtree = repository.findSubtree(ID.toString());
+
+        assertThat(subtree).extracting(Category::getId).containsExactly(ID.toString());
+        verify(jpaRepository).findSubtree(ID);
+    }
+
+    @Test
+    void givenAParentWithChildren_whenExistsByParentId_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.existsByParentId(ID)).thenReturn(true);
+
+        assertThat(repository.existsByParentId(ID.toString())).isTrue();
+        verify(jpaRepository).existsByParentId(ID);
     }
 
     @Test
@@ -80,7 +106,7 @@ class CategoryRepositoryImplTest {
         verify(jpaRepository).save(captor.capture());
         assertThat(captor.getValue().getId()).isNull();
         assertThat(captor.getValue().getParentId()).isEqualTo(PARENT_ID);
-        assertThat(captor.getValue().getPath()).isEqualTo(PATH);
+        assertThat(captor.getValue().getSlug()).isEqualTo(SLUG);
         assertThat(captor.getValue().getSortOrder()).isEqualTo(SORT_ORDER);
         assertThat(captor.getValue().isActive()).isTrue();
         assertThat(saved.getId()).isEqualTo(ID.toString());
@@ -98,16 +124,6 @@ class CategoryRepositoryImplTest {
     }
 
     @Test
-    void givenModels_whenSaveAll_thenEveryOneIsSavedAndMappedBack() {
-        when(jpaRepository.saveAll(any())).thenReturn(List.of(entity()));
-
-        List<Category> saved = repository.saveAll(List.of(model(ID.toString())));
-
-        assertThat(saved).extracting(Category::getId).containsExactly(ID.toString());
-        verify(jpaRepository).saveAll(any());
-    }
-
-    @Test
     void givenAStringId_whenDeleteById_thenTheJpaRepositoryIsCalledWithTheUuid() {
         repository.deleteById(ID.toString());
 
@@ -119,13 +135,12 @@ class CategoryRepositoryImplTest {
         entity.setId(ID);
         entity.setParentId(PARENT_ID);
         entity.setSlug(SLUG);
-        entity.setPath(PATH);
         entity.setSortOrder(SORT_ORDER);
         entity.setActive(true);
         return entity;
     }
 
     private Category model(String id) {
-        return new Category(id, PARENT_ID.toString(), SLUG, PATH, SORT_ORDER, true);
+        return new Category(id, PARENT_ID.toString(), SLUG, null, SORT_ORDER, true);
     }
 }
