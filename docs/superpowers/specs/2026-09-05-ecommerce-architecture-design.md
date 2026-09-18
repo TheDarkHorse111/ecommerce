@@ -28,7 +28,19 @@ cannot be constructed by hand.
 
 ### Queries
 
-Spring Data derived query methods are the default and are used wherever they can express the query. `@Query` is allowed only where a derived method cannot express it, for example a recursive CTE, a set operation or a window function. A derived method that exists is always preferred to an equivalent `@Query`, so that the method name stays the contract and refactoring stays safe. Prefer JPQL; `nativeQuery = true` only when JPQL cannot express it either. No Criteria string fragments. Raw SQL is allowed and expected inside Flyway migration files.
+Spring Data derived query methods are the default and are used wherever they can express the query. A derived method
+that exists is always preferred to an equivalent `@Query`, so that the method name stays the contract and renaming a
+field stays safe.
+
+`@Query` is allowed only where a derived method cannot express the query. Its text is standard JPQL and never a provider
+extension. Hibernate accepts HQL in that position and nothing fails the build, so this is a review rule rather than a
+compiler one, and it is what keeps the persistence layer portable across JPA providers.
+
+JPQL has no syntax for a recursive CTE, a set operation or a window function. Those carry `nativeQuery = true` and are
+written in ANSI SQL where ANSI has the construct, because a recursive CTE is SQL-99 and runs unchanged on every database
+worth targeting, whereas HQL runs only on Hibernate. The concrete database is already fixed by the Flyway migrations.
+
+No Criteria string fragments. Raw SQL is allowed and expected inside Flyway migration files.
 
 ### Layering
 

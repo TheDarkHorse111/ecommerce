@@ -21,9 +21,10 @@ framework.
 exception, because Spring generates their implementations.
 
 **Queries.** Spring Data derived query methods are the default and are used wherever they can
-express the query. `@Query` is allowed only where a derived method cannot express it, for example a
-recursive CTE, a set operation or a window function. Prefer JPQL; `nativeQuery = true` only when JPQL
-cannot express it either. No Criteria string fragments. Raw SQL belongs in Flyway migrations.
+express the query. `@Query` is allowed only where a derived method cannot. Its text is standard JPQL
+and never a provider extension such as Hibernate's HQL, so anything JPQL has no syntax for — a
+recursive CTE, a set operation, a window function — is `nativeQuery = true` and ANSI SQL where it
+can be. No Criteria string fragments. Raw SQL belongs in Flyway migrations.
 
 **Layering.** `controller → service → repository → jpa`. The controller speaks Request and Response
 records, the service speaks models, the repository returns models, the jpa layer owns entities.
