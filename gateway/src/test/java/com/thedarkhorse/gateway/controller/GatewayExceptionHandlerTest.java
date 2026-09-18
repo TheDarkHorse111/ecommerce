@@ -1,11 +1,11 @@
 package com.thedarkhorse.gateway.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.client.HttpServerErrorException;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 class GatewayExceptionHandlerTest {
 

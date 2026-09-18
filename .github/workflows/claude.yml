@@ -2,13 +2,13 @@ name: Claude
 
 on:
   issue_comment:
-    types: [created]
+    types: [ created ]
   pull_request_review_comment:
-    types: [created]
+    types: [ created ]
   pull_request_review:
-    types: [submitted]
+    types: [ submitted ]
   issues:
-    types: [opened]
+    types: [ opened ]
 
 jobs:
   claude:

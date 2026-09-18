@@ -1,8 +1,8 @@
 package com.thedarkhorse.catalog.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.util.List;
+import com.thedarkhorse.catalog.exception.CategoryCycleException;
+import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
+import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -16,6 +16,10 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.ServletWebRequest;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
 class CatalogExceptionHandlerTest {
 
     private static final String OBJECT_NAME = "categoryRequest";
@@ -28,6 +32,10 @@ class CatalogExceptionHandlerTest {
     private static final String CONSTRAINT_NAME = "category_path_key";
     private static final String SQL_MESSAGE =
             "duplicate key value violates unique constraint \"" + CONSTRAINT_NAME + "\"";
+    private static final String NOT_FOUND_DETAIL = "The requested resource does not exist";
+    private static final String MISSING_MESSAGE = "No category at path mice";
+    private static final String HAS_CHILDREN_MESSAGE = "Category has descendants at path keyboards";
+    private static final String CYCLE_MESSAGE = "Category cannot move under its own descendant at path keyboards";
 
     private final CatalogExceptionHandler handler = new CatalogExceptionHandler();
 
@@ -38,6 +46,7 @@ class CatalogExceptionHandlerTest {
                 handle(rejecting(new FieldError(OBJECT_NAME, SLUG, BLANK_MESSAGE)));
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody()).isNotNull();
         assertThat(((ProblemDetail) response.getBody()).getStatus()).isEqualTo(400);
         assertThat(errorsOf(response)).containsExactly(new ValidationError(SLUG, BLANK_MESSAGE));
     }
@@ -76,6 +85,33 @@ class CatalogExceptionHandlerTest {
         assertThat(body.getDetail()).doesNotContain(IllegalStateException.class.getSimpleName());
     }
 
+    @Test
+    void givenAMissingCategory_whenHandleCategoryNotFound_thenNotFoundHidesTheLookup() {
+        ProblemDetail body = handler.handleCategoryNotFound(new CategoryNotFoundException(MISSING_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(404);
+        assertThat(body.getDetail()).isEqualTo(NOT_FOUND_DETAIL);
+        assertThat(body.getDetail()).doesNotContain(MISSING_MESSAGE);
+    }
+
+    @Test
+    void givenACategoryWithChildren_whenHandleCategoryHasChildren_thenConflict() {
+        ProblemDetail body =
+                handler.handleCategoryHasChildren(new CategoryHasChildrenException(HAS_CHILDREN_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(409);
+        assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
+    }
+
+    @Test
+    void givenACycle_whenHandleCategoryCycle_thenConflict() {
+        ProblemDetail body = handler.handleCategoryCycle(new CategoryCycleException(CYCLE_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(409);
+        assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
+        assertThat(body.getDetail()).doesNotContain(CYCLE_MESSAGE);
+    }
+
     private MethodArgumentNotValidException rejecting(FieldError... fieldErrors) throws Exception {
         MethodParameter parameter =
                 new MethodParameter(ValidationError.class.getDeclaredMethod("field"), -1);
@@ -90,6 +126,8 @@ class CatalogExceptionHandlerTest {
     @SuppressWarnings("unchecked")
     private List<ValidationError> errorsOf(ResponseEntity<Object> response) {
         ProblemDetail body = (ProblemDetail) response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.getProperties()).isNotNull();
         return (List<ValidationError>) body.getProperties().get("errors");
     }
 
