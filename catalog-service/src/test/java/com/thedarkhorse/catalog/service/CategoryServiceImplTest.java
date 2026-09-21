@@ -98,6 +98,26 @@ class CategoryServiceImplTest {
     }
 
     @Test
+    void givenSeveralRoots_whenFindCategories_thenEveryTreeCarriesPathsFromItsOwnRoot() {
+        when(repository.findAll()).thenReturn(List.of(root(), newParent(), child(), grandchild()));
+
+        List<Category> categories = service.findCategories();
+
+        assertThat(categories).extracting(Category::getPath)
+                .containsExactly(ROOT_PATH, NEW_PARENT_SLUG, CHILD_PATH, GRANDCHILD_PATH);
+    }
+
+    @Test
+    void givenAnInactiveRoot_whenFindCategories_thenItsDescendantsAreNotEffectivelyActive() {
+        when(repository.findAll()).thenReturn(List.of(inactiveRoot(), child()));
+
+        List<Category> categories = service.findCategories();
+
+        assertThat(categories).extracting(Category::getActive).containsExactly(false, true);
+        assertThat(categories).extracting(Category::getEffectiveActive).containsExactly(false, false);
+    }
+
+    @Test
     void givenANodeWithDescendants_whenFindSubtree_thenEveryPathIsRebuiltFromTheParentChain() {
         when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
         when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(root(), child(), grandchild()));

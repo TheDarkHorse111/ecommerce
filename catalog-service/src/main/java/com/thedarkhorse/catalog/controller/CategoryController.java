@@ -23,6 +23,11 @@ public class CategoryController {
         this.mapper = mapper;
     }
 
+    @GetMapping
+    public ResponseEntity<List<CategoryResponse>> findCategories() {
+        return ResponseEntity.ok(mapper.toResponses(service.findCategories()));
+    }
+
     @GetMapping("/{*path}")
     public ResponseEntity<List<CategoryResponse>> findSubtree(@PathVariable String path) {
         return ResponseEntity.ok(mapper.toResponses(service.findSubtree(withoutLeadingSeparator(path))));

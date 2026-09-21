@@ -31,6 +31,16 @@ class CategoryControllerTest {
     private final CategoryController controller = new CategoryController(service, mapper);
 
     @Test
+    void givenNoPath_whenFindCategories_thenTheWholeTreeIsReturned() {
+        when(service.findCategories()).thenReturn(List.of(model()));
+
+        ResponseEntity<List<CategoryResponse>> response = controller.findCategories();
+
+        assertThat(response.getBody()).extracting(CategoryResponse::path).containsExactly(PATH);
+        verify(service).findCategories();
+    }
+
+    @Test
     void givenACapturedPathWithALeadingSlash_whenFindSubtree_thenTheServiceIsCalledWithoutIt() {
         when(service.findSubtree(PATH)).thenReturn(List.of(model()));
 

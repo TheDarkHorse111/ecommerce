@@ -14,6 +14,8 @@ public interface CategoryJpaRepository extends JpaRepository<CategoryEntity, UUI
 
     Optional<CategoryEntity> findByParentIdAndSlug(UUID parentId, String slug);
 
+    List<CategoryEntity> findAllByOrderBySortOrderAscSlugAsc();
+
     boolean existsByParentId(UUID parentId);
 
     @Query(value = """

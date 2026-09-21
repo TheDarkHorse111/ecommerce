@@ -36,6 +36,20 @@ public class CategoryServiceImpl implements CategoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<Category> findCategories() {
+        List<Category> categories = repository.findAll();
+        List<Category> roots = categories.stream()
+                .filter(category -> category.getParentId() == null)
+                .toList();
+        roots.forEach(root -> {
+            root.setPath(root.getSlug());
+            root.setEffectiveActive(root.getActive());
+        });
+        return withDerivedFields(categories, roots);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<Category> findSubtree(String path) {
         Category node = findCategoryAt(path);
         List<Category> subtree = repository.findSubtree(node.getId());

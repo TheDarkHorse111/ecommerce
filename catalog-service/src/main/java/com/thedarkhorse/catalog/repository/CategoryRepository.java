@@ -11,6 +11,8 @@ public interface CategoryRepository {
 
     Optional<Category> findByParentIdAndSlug(String parentId, String slug);
 
+    List<Category> findAll();
+
     List<Category> findSubtree(String id);
 
     boolean existsByParentId(String parentId);

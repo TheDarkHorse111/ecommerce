@@ -130,6 +130,16 @@ class CategoryRepositoryImplTest {
         verify(jpaRepository).deleteById(ID);
     }
 
+    @Test
+    void givenStoredEntities_whenFindAll_thenEverySiblingOrderIsAppliedByTheQuery() {
+        when(jpaRepository.findAllByOrderBySortOrderAscSlugAsc()).thenReturn(List.of(entity()));
+
+        List<Category> categories = repository.findAll();
+
+        assertThat(categories).extracting(Category::getId).containsExactly(ID.toString());
+        verify(jpaRepository).findAllByOrderBySortOrderAscSlugAsc();
+    }
+
     private CategoryEntity entity() {
         CategoryEntity entity = new CategoryEntity();
         entity.setId(ID);
