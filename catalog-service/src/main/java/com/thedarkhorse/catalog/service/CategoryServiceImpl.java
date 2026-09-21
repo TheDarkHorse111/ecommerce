@@ -10,8 +10,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public class CategoryServiceImpl implements CategoryService {
@@ -22,6 +24,7 @@ public class CategoryServiceImpl implements CategoryService {
     private static final String NOT_FOUND_PATH = "No category at path ";
     private static final String HAS_CHILDREN = "Category has children with id ";
     private static final String CYCLE = "Category cannot move under its own descendant with id ";
+    private static final String CYCLE_IN_CHAIN = "Category ancestors already contain a cycle at id ";
     private static final int DEFAULT_SORT_ORDER = 0;
 
     private final CategoryRepository repository;
@@ -93,11 +96,15 @@ public class CategoryServiceImpl implements CategoryService {
     private String findPathUnder(String movingId, String parentId, String slug) {
         Deque<String> slugs = new ArrayDeque<>();
         slugs.addFirst(slug);
+        Set<String> visited = new HashSet<>();
         String ancestorId = parentId;
         while (ancestorId != null) {
             Category ancestor = findCategory(ancestorId);
             if (ancestor.getId().equals(movingId)) {
                 throw new CategoryCycleException(CYCLE + movingId);
+            }
+            if (!visited.add(ancestor.getId())) {
+                throw new CategoryCycleException(CYCLE_IN_CHAIN + ancestor.getId());
             }
             slugs.addFirst(ancestor.getSlug());
             ancestorId = ancestor.getParentId();

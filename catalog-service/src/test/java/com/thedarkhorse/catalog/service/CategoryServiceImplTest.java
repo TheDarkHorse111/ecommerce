@@ -7,6 +7,7 @@ import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.List;
 import java.util.Optional;
@@ -281,6 +282,22 @@ class CategoryServiceImplTest {
 
         ThrowingCallable throwingCallable = () -> service.updateCategory(
                 ROOT_ID_UPPERCASE, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    @Timeout(value = 2, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void givenAnAncestorChainThatAlreadyLoops_whenUpdateCategory_thenCategoryCycle() {
+        Category looping = new Category(CHILD_ID, GRANDCHILD_ID, CHILD_SLUG, null, 0, true);
+        Category loopingBack = new Category(GRANDCHILD_ID, CHILD_ID, GRANDCHILD_SLUG, null, 0, true);
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(looping));
+        when(repository.findById(GRANDCHILD_ID)).thenReturn(Optional.of(loopingBack));
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
