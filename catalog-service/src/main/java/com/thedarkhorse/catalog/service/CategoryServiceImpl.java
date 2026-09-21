@@ -87,9 +87,6 @@ public class CategoryServiceImpl implements CategoryService {
                     .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
             parentId = node.getId();
         }
-        if (node == null) {
-            throw new CategoryNotFoundException(NOT_FOUND_PATH + path);
-        }
         return node;
     }
 
