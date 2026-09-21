@@ -131,13 +131,13 @@ class CategoryRepositoryImplTest {
     }
 
     @Test
-    void givenStoredEntities_whenFindAll_thenEverySiblingOrderIsAppliedByTheQuery() {
-        when(jpaRepository.findAllByOrderBySortOrderAscSlugAsc()).thenReturn(List.of(entity()));
+    void givenStoredEntities_whenFindAll_thenTheDepthOrderedQueryIsUsed() {
+        when(jpaRepository.findForest()).thenReturn(List.of(entity()));
 
         List<Category> categories = repository.findAll();
 
         assertThat(categories).extracting(Category::getId).containsExactly(ID.toString());
-        verify(jpaRepository).findAllByOrderBySortOrderAscSlugAsc();
+        verify(jpaRepository).findForest();
     }
 
     @Test

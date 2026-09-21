@@ -31,7 +31,7 @@ public class CategoryRepositoryImpl implements CategoryRepository {
 
     @Override
     public List<Category> findAll() {
-        return mapper.toModels(jpaRepository.findAllByOrderBySortOrderAscSlugAsc());
+        return mapper.toModels(jpaRepository.findForest());
     }
 
     @Override

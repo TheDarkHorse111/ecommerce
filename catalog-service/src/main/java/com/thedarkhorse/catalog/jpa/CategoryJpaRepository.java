@@ -14,8 +14,6 @@ public interface CategoryJpaRepository extends JpaRepository<CategoryEntity, UUI
 
     Optional<CategoryEntity> findByParentIdAndSlug(UUID parentId, String slug);
 
-    List<CategoryEntity> findAllByOrderBySortOrderAscSlugAsc();
-
     boolean existsByParentId(UUID parentId);
 
     @Query(value = """
@@ -45,4 +43,32 @@ public interface CategoryJpaRepository extends JpaRepository<CategoryEntity, UUI
             order by depth, sort_order, slug
             """, nativeQuery = true)
     List<CategoryEntity> findSubtree(@Param("id") UUID id);
+
+    @Query(value = """
+            with recursive forest as (select c.id,
+                                             c.parent_id,
+                                             c.slug,
+                                             c.sort_order,
+                                             c.active,
+                                             c.created_at,
+                                             c.updated_at,
+                                             0 as depth
+                                      from category c
+                                      where c.parent_id is null
+                                      union all
+                                      select c.id,
+                                             c.parent_id,
+                                             c.slug,
+                                             c.sort_order,
+                                             c.active,
+                                             c.created_at,
+                                             c.updated_at,
+                                             f.depth + 1
+                                      from category c
+                                               join forest f on c.parent_id = f.id)
+            select id, parent_id, slug, sort_order, active, created_at, updated_at
+            from forest
+            order by depth, sort_order, slug
+            """, nativeQuery = true)
+    List<CategoryEntity> findForest();
 }

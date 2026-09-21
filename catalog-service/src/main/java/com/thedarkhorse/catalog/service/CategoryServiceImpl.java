@@ -9,7 +9,6 @@ import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -141,21 +140,16 @@ public class CategoryServiceImpl implements CategoryService {
     }
 
     private List<Category> withDerivedFields(List<Category> categories, List<Category> roots) {
-        Map<String, List<Category>> childrenByParent = new HashMap<>();
-        categories.forEach(category -> childrenByParent
-                .computeIfAbsent(category.getParentId(), parentId -> new ArrayList<>())
-                .add(category));
-        List<Category> ordered = new ArrayList<>(categories.size());
-        Deque<Category> pending = new ArrayDeque<>(roots);
-        while (!pending.isEmpty()) {
-            Category current = pending.removeFirst();
-            ordered.add(current);
-            childrenByParent.getOrDefault(current.getId(), List.of()).forEach(child -> {
-                child.setPath(paths.findPathUnder(current.getPath(), child.getSlug()));
-                child.setEffectiveActive(current.getEffectiveActive() && child.getActive());
-                pending.addLast(child);
-            });
-        }
-        return ordered;
+        Map<String, Category> byId = new HashMap<>();
+        roots.forEach(root -> byId.put(root.getId(), root));
+        categories.forEach(category -> {
+            Category parent = byId.get(category.getParentId());
+            if (parent != null) {
+                category.setPath(paths.findPathUnder(parent.getPath(), category.getSlug()));
+                category.setEffectiveActive(parent.getEffectiveActive() && category.getActive());
+            }
+            byId.put(category.getId(), category);
+        });
+        return categories;
     }
 }
