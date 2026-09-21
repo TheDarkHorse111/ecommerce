@@ -8,6 +8,7 @@ import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,7 +38,12 @@ public class CategoryServiceImpl implements CategoryService {
     @Transactional(readOnly = true)
     public List<Category> findSubtree(String path) {
         Category node = findCategoryAt(path);
-        return withPaths(repository.findSubtree(node.getId()), path);
+        List<Category> subtree = repository.findSubtree(node.getId());
+        List<Category> roots = subtree.stream()
+                .filter(category -> category.getId().equals(node.getId()))
+                .toList();
+        roots.forEach(root -> root.setPath(path));
+        return withPaths(subtree, roots);
     }
 
     @Override
@@ -109,14 +115,21 @@ public class CategoryServiceImpl implements CategoryService {
         return String.join(SEPARATOR, slugs);
     }
 
-    private List<Category> withPaths(List<Category> subtree, String rootPath) {
-        Map<String, String> paths = new HashMap<>();
-        subtree.forEach(category -> {
-            String parentPath = paths.get(category.getParentId());
-            String path = parentPath == null ? rootPath : parentPath + SEPARATOR + category.getSlug();
-            paths.put(category.getId(), path);
-            category.setPath(path);
-        });
-        return subtree;
+    private List<Category> withPaths(List<Category> categories, List<Category> roots) {
+        Map<String, List<Category>> childrenByParent = new HashMap<>();
+        categories.forEach(category -> childrenByParent
+                .computeIfAbsent(category.getParentId(), parentId -> new ArrayList<>())
+                .add(category));
+        List<Category> ordered = new ArrayList<>(categories.size());
+        Deque<Category> pending = new ArrayDeque<>(roots);
+        while (!pending.isEmpty()) {
+            Category current = pending.removeFirst();
+            ordered.add(current);
+            childrenByParent.getOrDefault(current.getId(), List.of()).forEach(child -> {
+                child.setPath(current.getPath() + SEPARATOR + child.getSlug());
+                pending.addLast(child);
+            });
+        }
+        return ordered;
     }
 }

@@ -109,6 +109,17 @@ class CategoryServiceImplTest {
     }
 
     @Test
+    void givenSubtreeRowsOutOfDepthOrder_whenFindSubtree_thenEveryPathIsStillBuiltFromTheRoot() {
+        when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
+        when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(grandchild(), child(), root()));
+
+        List<Category> subtree = service.findSubtree(ROOT_PATH);
+
+        assertThat(subtree).extracting(Category::getPath)
+                .containsExactly(ROOT_PATH, CHILD_PATH, GRANDCHILD_PATH);
+    }
+
+    @Test
     void givenANestedPath_whenFindSubtree_thenEachSegmentResolvesAgainstItsParent() {
         when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
         when(repository.findByParentIdAndSlug(ROOT_ID, CHILD_SLUG)).thenReturn(Optional.of(child()));
