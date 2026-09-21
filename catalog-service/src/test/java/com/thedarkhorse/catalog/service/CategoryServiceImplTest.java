@@ -22,7 +22,8 @@ import static org.mockito.Mockito.when;
 
 class CategoryServiceImplTest {
 
-    private static final String ROOT_ID = "01920000-0000-7000-8000-000000000001";
+    private static final String ROOT_ID = "01920000-0000-7000-8000-00000000000a";
+    private static final String ROOT_ID_UPPERCASE = "01920000-0000-7000-8000-00000000000A";
     private static final String CHILD_ID = "01920000-0000-7000-8000-000000000002";
     private static final String GRANDCHILD_ID = "01920000-0000-7000-8000-000000000003";
     private static final String NEW_PARENT_ID = "01920000-0000-7000-8000-000000000004";
@@ -267,6 +268,19 @@ class CategoryServiceImplTest {
 
         ThrowingCallable throwingCallable = () -> service.updateCategory(
                 ROOT_ID, new Category(null, GRANDCHILD_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void givenADescendantAsTheNewParentSpelledInUppercase_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(ROOT_ID_UPPERCASE)).thenReturn(Optional.of(root()));
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID_UPPERCASE, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());

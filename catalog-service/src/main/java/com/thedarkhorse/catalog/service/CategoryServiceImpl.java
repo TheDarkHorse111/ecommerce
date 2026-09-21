@@ -52,7 +52,7 @@ public class CategoryServiceImpl implements CategoryService {
     @Transactional
     public Category updateCategory(String id, Category category) {
         Category existing = findCategory(id);
-        String path = findPathUnder(id, category.getParentId(), category.getSlug());
+        String path = findPathUnder(existing.getId(), category.getParentId(), category.getSlug());
         existing.setParentId(category.getParentId());
         existing.setSlug(category.getSlug());
         existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
@@ -95,10 +95,10 @@ public class CategoryServiceImpl implements CategoryService {
         slugs.addFirst(slug);
         String ancestorId = parentId;
         while (ancestorId != null) {
-            if (ancestorId.equals(movingId)) {
+            Category ancestor = findCategory(ancestorId);
+            if (ancestor.getId().equals(movingId)) {
                 throw new CategoryCycleException(CYCLE + movingId);
             }
-            Category ancestor = findCategory(ancestorId);
             slugs.addFirst(ancestor.getSlug());
             ancestorId = ancestor.getParentId();
         }
