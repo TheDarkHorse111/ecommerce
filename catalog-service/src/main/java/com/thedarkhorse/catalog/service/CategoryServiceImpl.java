@@ -4,6 +4,7 @@ import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,12 +16,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 public class CategoryServiceImpl implements CategoryService {
 
-    private static final String SEPARATOR = "/";
-    private static final Pattern SEPARATOR_PATTERN = Pattern.compile(SEPARATOR);
     private static final String NOT_FOUND = "No category with id ";
     private static final String NOT_FOUND_PATH = "No category at path ";
     private static final String HAS_CHILDREN = "Category has children with id ";
@@ -29,9 +27,11 @@ public class CategoryServiceImpl implements CategoryService {
     private static final int DEFAULT_SORT_ORDER = 0;
 
     private final CategoryRepository repository;
+    private final CategoryPaths paths;
 
-    public CategoryServiceImpl(CategoryRepository repository) {
+    public CategoryServiceImpl(CategoryRepository repository, CategoryPaths paths) {
         this.repository = repository;
+        this.paths = paths;
     }
 
     @Override
@@ -70,7 +70,7 @@ public class CategoryServiceImpl implements CategoryService {
         category.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         category.setActive(category.getActive() == null || category.getActive());
         Category created = repository.save(category);
-        created.setPath(findPathUnder(ancestors, created.getSlug()));
+        created.setPath(paths.findPathOf(ancestors, created.getSlug()));
         created.setEffectiveActive(findEffectiveActive(ancestors, created.getActive()));
         return created;
     }
@@ -85,7 +85,7 @@ public class CategoryServiceImpl implements CategoryService {
         existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         existing.setActive(category.getActive() == null || category.getActive());
         Category updated = repository.save(existing);
-        updated.setPath(findPathUnder(ancestors, updated.getSlug()));
+        updated.setPath(paths.findPathOf(ancestors, updated.getSlug()));
         updated.setEffectiveActive(findEffectiveActive(ancestors, updated.getActive()));
         return updated;
     }
@@ -108,7 +108,7 @@ public class CategoryServiceImpl implements CategoryService {
         Category node = null;
         String parentId = null;
         boolean effectiveActive = true;
-        for (String slug : SEPARATOR_PATTERN.split(path, -1)) {
+        for (String slug : paths.findSlugs(path)) {
             node = repository.findByParentIdAndSlug(parentId, slug)
                     .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
             effectiveActive = effectiveActive && node.getActive();
@@ -136,12 +136,6 @@ public class CategoryServiceImpl implements CategoryService {
         return List.copyOf(ancestors);
     }
 
-    private String findPathUnder(List<Category> ancestors, String slug) {
-        StringBuilder path = new StringBuilder();
-        ancestors.forEach(ancestor -> path.append(ancestor.getSlug()).append(SEPARATOR));
-        return path.append(slug).toString();
-    }
-
     private boolean findEffectiveActive(List<Category> ancestors, Boolean active) {
         return active && ancestors.stream().allMatch(Category::getActive);
     }
@@ -157,7 +151,7 @@ public class CategoryServiceImpl implements CategoryService {
             Category current = pending.removeFirst();
             ordered.add(current);
             childrenByParent.getOrDefault(current.getId(), List.of()).forEach(child -> {
-                child.setPath(current.getPath() + SEPARATOR + child.getSlug());
+                child.setPath(paths.findPathUnder(current.getPath(), child.getSlug()));
                 child.setEffectiveActive(current.getEffectiveActive() && child.getActive());
                 pending.addLast(child);
             });

@@ -3,6 +3,7 @@ package com.thedarkhorse.catalog.controller;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
 import com.thedarkhorse.catalog.model.Category;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.service.CategoryService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -28,7 +29,7 @@ class CategoryControllerTest {
 
     private final CategoryService service = mock(CategoryService.class);
     private final CategoryMapper mapper = new CategoryMapperImpl();
-    private final CategoryController controller = new CategoryController(service, mapper);
+    private final CategoryController controller = new CategoryController(service, mapper, new CategoryPaths());
 
     @Test
     void givenNoPath_whenFindCategories_thenTheWholeTreeIsReturned() {

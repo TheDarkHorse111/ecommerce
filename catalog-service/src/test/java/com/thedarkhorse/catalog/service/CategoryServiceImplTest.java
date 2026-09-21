@@ -4,6 +4,7 @@ import com.thedarkhorse.catalog.exception.CategoryCycleException;
 import com.thedarkhorse.catalog.exception.CategoryHasChildrenException;
 import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
 import com.thedarkhorse.catalog.model.Category;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,7 @@ class CategoryServiceImplTest {
     private static final String MISSING_PATH = "mice";
 
     private final CategoryRepository repository = mock(CategoryRepository.class);
-    private final CategoryServiceImpl service = new CategoryServiceImpl(repository);
+    private final CategoryServiceImpl service = new CategoryServiceImpl(repository, new CategoryPaths());
 
     @Test
     void givenAParent_whenCreateCategory_thenThePathIsTheParentPathAndTheSlug() {
