@@ -140,6 +140,14 @@ class CategoryRepositoryImplTest {
         verify(jpaRepository).findAllByOrderBySortOrderAscSlugAsc();
     }
 
+    @Test
+    void givenAMalformedId_whenFindById_thenNothingIsFoundAndTheDatabaseIsNotQueried() {
+        Optional<Category> found = repository.findById("banana");
+
+        assertThat(found).isEmpty();
+        verify(jpaRepository, never()).findById(any(UUID.class));
+    }
+
     private CategoryEntity entity() {
         CategoryEntity entity = new CategoryEntity();
         entity.setId(ID);

@@ -21,7 +21,7 @@ public class CategoryRepositoryImpl implements CategoryRepository {
 
     @Override
     public Optional<Category> findById(String id) {
-        return jpaRepository.findById(UUID.fromString(id)).map(mapper::toModel);
+        return toUuid(id).flatMap(jpaRepository::findById).map(mapper::toModel);
     }
 
     @Override
@@ -59,5 +59,13 @@ public class CategoryRepositoryImpl implements CategoryRepository {
             return jpaRepository.findByParentIdIsNullAndSlug(slug);
         }
         return jpaRepository.findByParentIdAndSlug(UUID.fromString(parentId), slug);
+    }
+
+    private static Optional<UUID> toUuid(String id) {
+        try {
+            return Optional.of(UUID.fromString(id));
+        } catch (IllegalArgumentException exception) {
+            return Optional.empty();
+        }
     }
 }
