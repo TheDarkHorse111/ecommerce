@@ -6,6 +6,7 @@ public record CategoryResponse(
         String slug,
         String path,
         Integer sortOrder,
-        Boolean active
+        Boolean active,
+        Boolean effectiveActive
 ) {
 }

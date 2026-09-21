@@ -141,6 +141,6 @@ class CategoryRepositoryImplTest {
     }
 
     private Category model(String id) {
-        return new Category(id, PARENT_ID.toString(), SLUG, null, SORT_ORDER, true);
+        return new Category(id, PARENT_ID.toString(), SLUG, null, SORT_ORDER, true, null);
     }
 }

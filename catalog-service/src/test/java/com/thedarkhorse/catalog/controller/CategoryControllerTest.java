@@ -91,6 +91,6 @@ class CategoryControllerTest {
     }
 
     private Category model() {
-        return new Category(ID, PARENT_ID, SLUG, PATH, SORT_ORDER, true);
+        return new Category(ID, PARENT_ID, SLUG, PATH, SORT_ORDER, true, null);
     }
 }

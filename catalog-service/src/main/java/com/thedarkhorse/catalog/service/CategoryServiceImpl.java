@@ -42,18 +42,22 @@ public class CategoryServiceImpl implements CategoryService {
         List<Category> roots = subtree.stream()
                 .filter(category -> category.getId().equals(node.getId()))
                 .toList();
-        roots.forEach(root -> root.setPath(path));
-        return withPaths(subtree, roots);
+        roots.forEach(root -> {
+            root.setPath(path);
+            root.setEffectiveActive(node.getEffectiveActive());
+        });
+        return withDerivedFields(subtree, roots);
     }
 
     @Override
     @Transactional
     public Category createCategory(Category category) {
-        String path = findPathUnder(null, category.getParentId(), category.getSlug());
+        List<Category> ancestors = findAncestors(null, category.getParentId());
         category.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         category.setActive(category.getActive() == null || category.getActive());
         Category created = repository.save(category);
-        created.setPath(path);
+        created.setPath(findPathUnder(ancestors, created.getSlug()));
+        created.setEffectiveActive(findEffectiveActive(ancestors, created.getActive()));
         return created;
     }
 
@@ -61,13 +65,14 @@ public class CategoryServiceImpl implements CategoryService {
     @Transactional
     public Category updateCategory(String id, Category category) {
         Category existing = findCategory(id);
-        String path = findPathUnder(existing.getId(), category.getParentId(), category.getSlug());
+        List<Category> ancestors = findAncestors(existing.getId(), category.getParentId());
         existing.setParentId(category.getParentId());
         existing.setSlug(category.getSlug());
         existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         existing.setActive(category.getActive() == null || category.getActive());
         Category updated = repository.save(existing);
-        updated.setPath(path);
+        updated.setPath(findPathUnder(ancestors, updated.getSlug()));
+        updated.setEffectiveActive(findEffectiveActive(ancestors, updated.getActive()));
         return updated;
     }
 
@@ -88,17 +93,19 @@ public class CategoryServiceImpl implements CategoryService {
     private Category findCategoryAt(String path) {
         Category node = null;
         String parentId = null;
+        boolean effectiveActive = true;
         for (String slug : SEPARATOR_PATTERN.split(path, -1)) {
             node = repository.findByParentIdAndSlug(parentId, slug)
                     .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
+            effectiveActive = effectiveActive && node.getActive();
             parentId = node.getId();
         }
+        node.setEffectiveActive(effectiveActive);
         return node;
     }
 
-    private String findPathUnder(String movingId, String parentId, String slug) {
-        Deque<String> slugs = new ArrayDeque<>();
-        slugs.addFirst(slug);
+    private List<Category> findAncestors(String movingId, String parentId) {
+        Deque<Category> ancestors = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
         String ancestorId = parentId;
         while (ancestorId != null) {
@@ -109,13 +116,23 @@ public class CategoryServiceImpl implements CategoryService {
             if (!visited.add(ancestor.getId())) {
                 throw new CategoryCycleException(CYCLE_IN_CHAIN + ancestor.getId());
             }
-            slugs.addFirst(ancestor.getSlug());
+            ancestors.addFirst(ancestor);
             ancestorId = ancestor.getParentId();
         }
-        return String.join(SEPARATOR, slugs);
+        return List.copyOf(ancestors);
     }
 
-    private List<Category> withPaths(List<Category> categories, List<Category> roots) {
+    private String findPathUnder(List<Category> ancestors, String slug) {
+        StringBuilder path = new StringBuilder();
+        ancestors.forEach(ancestor -> path.append(ancestor.getSlug()).append(SEPARATOR));
+        return path.append(slug).toString();
+    }
+
+    private boolean findEffectiveActive(List<Category> ancestors, Boolean active) {
+        return active && ancestors.stream().allMatch(Category::getActive);
+    }
+
+    private List<Category> withDerivedFields(List<Category> categories, List<Category> roots) {
         Map<String, List<Category>> childrenByParent = new HashMap<>();
         categories.forEach(category -> childrenByParent
                 .computeIfAbsent(category.getParentId(), parentId -> new ArrayList<>())
@@ -127,6 +144,7 @@ public class CategoryServiceImpl implements CategoryService {
             ordered.add(current);
             childrenByParent.getOrDefault(current.getId(), List.of()).forEach(child -> {
                 child.setPath(current.getPath() + SEPARATOR + child.getSlug());
+                child.setEffectiveActive(current.getEffectiveActive() && child.getActive());
                 pending.addLast(child);
             });
         }

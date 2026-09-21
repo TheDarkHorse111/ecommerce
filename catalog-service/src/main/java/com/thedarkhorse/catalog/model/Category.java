@@ -15,4 +15,5 @@ public class Category {
     private String path;
     private Integer sortOrder;
     private Boolean active;
+    private Boolean effectiveActive;
 }
