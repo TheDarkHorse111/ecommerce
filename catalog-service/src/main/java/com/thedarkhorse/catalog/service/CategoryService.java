@@ -6,6 +6,8 @@ import java.util.List;
 
 public interface CategoryService {
 
+    List<Category> findCategories();
+
     List<Category> findSubtree(String path);
 
     Category createCategory(Category category);

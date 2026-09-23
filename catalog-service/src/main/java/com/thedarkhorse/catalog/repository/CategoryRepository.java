@@ -9,13 +9,15 @@ public interface CategoryRepository {
 
     Optional<Category> findById(String id);
 
-    Optional<Category> findByPath(String path);
+    Optional<Category> findByParentIdAndSlug(String parentId, String slug);
 
-    List<Category> findByPathStartingWith(String prefix);
+    List<Category> findAll();
+
+    List<Category> findSubtree(String id);
+
+    boolean existsByParentId(String parentId);
 
     Category save(Category category);
-
-    List<Category> saveAll(List<Category> categories);
 
     void deleteById(String id);
 }

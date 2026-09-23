@@ -26,8 +26,6 @@ public class CategoryEntity {
 
     private String slug;
 
-    private String path;
-
     private int sortOrder;
 
     private boolean active;

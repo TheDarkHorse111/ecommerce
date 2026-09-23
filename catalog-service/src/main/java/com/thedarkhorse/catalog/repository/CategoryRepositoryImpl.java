@@ -1,5 +1,6 @@
 package com.thedarkhorse.catalog.repository;
 
+import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.jpa.CategoryJpaRepository;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.model.Category;
@@ -20,17 +21,27 @@ public class CategoryRepositoryImpl implements CategoryRepository {
 
     @Override
     public Optional<Category> findById(String id) {
-        return jpaRepository.findById(UUID.fromString(id)).map(mapper::toModel);
+        return toUuid(id).flatMap(jpaRepository::findById).map(mapper::toModel);
     }
 
     @Override
-    public Optional<Category> findByPath(String path) {
-        return jpaRepository.findByPath(path).map(mapper::toModel);
+    public Optional<Category> findByParentIdAndSlug(String parentId, String slug) {
+        return findEntityByParentIdAndSlug(parentId, slug).map(mapper::toModel);
     }
 
     @Override
-    public List<Category> findByPathStartingWith(String prefix) {
-        return mapper.toModels(jpaRepository.findByPathStartingWithOrderByPathAsc(prefix));
+    public List<Category> findAll() {
+        return mapper.toModels(jpaRepository.findForest());
+    }
+
+    @Override
+    public List<Category> findSubtree(String id) {
+        return mapper.toModels(jpaRepository.findSubtree(UUID.fromString(id)));
+    }
+
+    @Override
+    public boolean existsByParentId(String parentId) {
+        return jpaRepository.existsByParentId(UUID.fromString(parentId));
     }
 
     @Override
@@ -39,12 +50,22 @@ public class CategoryRepositoryImpl implements CategoryRepository {
     }
 
     @Override
-    public List<Category> saveAll(List<Category> categories) {
-        return mapper.toModels(jpaRepository.saveAll(categories.stream().map(mapper::toEntity).toList()));
-    }
-
-    @Override
     public void deleteById(String id) {
         jpaRepository.deleteById(UUID.fromString(id));
+    }
+
+    private Optional<CategoryEntity> findEntityByParentIdAndSlug(String parentId, String slug) {
+        if (parentId == null) {
+            return jpaRepository.findByParentIdIsNullAndSlug(slug);
+        }
+        return jpaRepository.findByParentIdAndSlug(UUID.fromString(parentId), slug);
+    }
+
+    private static Optional<UUID> toUuid(String id) {
+        try {
+            return Optional.of(UUID.fromString(id));
+        } catch (IllegalArgumentException exception) {
+            return Optional.empty();
+        }
     }
 }

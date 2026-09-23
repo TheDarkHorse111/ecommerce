@@ -1,6 +1,7 @@
 package com.thedarkhorse.catalog.controller;
 
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.service.CategoryService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -13,19 +14,24 @@ import java.util.List;
 @RequestMapping("/api/v1/categories")
 public class CategoryController {
 
-    private static final String SEPARATOR = "/";
-
     private final CategoryService service;
     private final CategoryMapper mapper;
+    private final CategoryPaths paths;
 
-    public CategoryController(CategoryService service, CategoryMapper mapper) {
+    public CategoryController(CategoryService service, CategoryMapper mapper, CategoryPaths paths) {
         this.service = service;
         this.mapper = mapper;
+        this.paths = paths;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<CategoryResponse>> findCategories() {
+        return ResponseEntity.ok(mapper.toResponses(service.findCategories()));
     }
 
     @GetMapping("/{*path}")
     public ResponseEntity<List<CategoryResponse>> findSubtree(@PathVariable String path) {
-        return ResponseEntity.ok(mapper.toResponses(service.findSubtree(withoutLeadingSeparator(path))));
+        return ResponseEntity.ok(mapper.toResponses(service.findSubtree(paths.withoutLeadingSeparator(path))));
     }
 
     @PostMapping
@@ -44,9 +50,5 @@ public class CategoryController {
     public ResponseEntity<Void> deleteCategory(@PathVariable String id) {
         service.deleteCategory(id);
         return ResponseEntity.noContent().build();
-    }
-
-    private String withoutLeadingSeparator(String path) {
-        return path.startsWith(SEPARATOR) ? path.substring(SEPARATOR.length()) : path;
     }
 }

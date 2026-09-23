@@ -1,12 +1,13 @@
 package com.thedarkhorse.catalog.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class Category {
 
     private String id;
@@ -15,4 +16,6 @@ public class Category {
     private String path;
     private Integer sortOrder;
     private Boolean active;
+    private Boolean effectiveActive;
+    private final List<Category> children = new ArrayList<>();
 }

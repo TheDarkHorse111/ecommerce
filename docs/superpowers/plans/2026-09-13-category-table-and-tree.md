@@ -4,17 +4,19 @@
 > executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the `category` table, its Flyway migration, and the read and write endpoints for the category tree in
-`catalog-service`, with `path` as a materialised path derived from the parent so a subtree read is one
-`like 'keyboards/%'` instead of recursion.
+`catalog-service`, with `parent_id` as the only stored structure. The path is derived on demand, never stored, so a
+subtree read is one `with recursive` query and a move writes exactly one row.
 
 **Architecture:** One Flyway migration creates `category`. Above it the four layers the spec mandates —
 `controller → service → repository → jpa` — arrive one at a time, each with its own failing test. `CategoryEntity` owns
 the `UUID` and the two Hibernate-generated timestamps; `CategoryRepositoryImpl` converts `UUID` to `String` through a
-MapStruct mapper and returns `Category` models; `CategoryServiceImpl` owns every rule the issue states — deriving `path`
-from the parent, defaulting `sort_order` and `active`, refusing to delete a node with descendants, and recomputing
-`path` for a moved node and every descendant under it; `CategoryController` speaks `CategoryRequest` and
-`CategoryResponse` and nothing else. Integrity that belongs in the database stays there: the duplicate-slug 409 comes
-from `unique nulls not distinct (parent_id, slug)` and the existing `@RestControllerAdvice` from #14, not from a Java
+MapStruct mapper and returns `Category` models; `CategoryServiceImpl` owns every rule the issue states — walking
+`parent_id` upward to build a path, resolving a path back to a node one slug at a time, defaulting `sort_order` and
+`active`, refusing to delete a node with children, and refusing a move that would put a node under its own descendant;
+`CategoryController` speaks `CategoryRequest` and `CategoryResponse` and nothing else. `path` exists only on the model
+and the response, computed per request and never persisted, so nothing can drift out of agreement with `parent_id`.
+Integrity that belongs in the database stays there: the duplicate-slug 409 comes from
+`unique nulls not distinct (parent_id, slug)` and the existing `@RestControllerAdvice` from #14, not from a Java
 check.
 
 **Tech Stack:** Java 25 (Amazon Corretto 25.0.4.1), Apache Maven 3.9.16, Spring Boot 4.1.0, Spring Framework 7.0.8,
@@ -29,6 +31,15 @@ query ban, the layering, the type rules, the API layer and the testing rules; se
 increment sits. Issue #15 is the specification for this increment; its `### Scope`, `### Design` and `### Acceptance`
 sections are the requirement, and its comments are not. Its stated dependency #14 is merged at `fc87dfb` and is planned
 in `docs/superpowers/plans/2026-09-09-catalog-service.md`.
+
+**Design revision.** This plan was first written around a materialised `path` column: `path varchar(500) not null
+unique`, a subtree read as `path = ? or path like ?/%`, and a move that rewrote every descendant row. That column is
+gone. `parent_id` is the only stored structure and `path` is derived on demand, because a stored path is a denormalised
+copy of the parent chain that no constraint in PostgreSQL can hold in agreement with it — every rename and every move
+has to rewrite an unbounded number of rows, and any write that misses one leaves the table quietly wrong. The findings,
+tasks and commit messages below describe the design that shipped. The measurements that the removal invalidated were
+re-run against a real database rather than deleted; finding 8 is the replacement, and findings 1 to 7 and 9 to 15 stand
+as originally measured.
 
 ---
 
@@ -47,8 +58,11 @@ Copied from `CLAUDE.md` and the spec. Every task's requirements implicitly inclu
   `CategoryJpaRepository` is the one exception, because Spring generates its implementation. Do **not** write
   `@Mapper(componentModel = "spring")`: it makes MapStruct emit `@Component` on the generated class, which is the banned
   annotation arriving by the back door.
-- **Queries.** No raw query text in Java. No `@Query`, no native SQL, no Criteria fragments. Only Spring Data derived
-  query methods. The only SQL in this increment is `V1__create_category_table.sql`.
+- **Queries.** Spring Data derived query methods are the default and are used wherever they can express the query.
+  `@Query` is allowed only where a derived method cannot, and its text is standard JPQL, never a provider extension
+  such as Hibernate's HQL. A recursive CTE is one of the things JPQL has no syntax for, so `findSubtree` is
+  `nativeQuery = true` and ANSI SQL. No Criteria string fragments. The only other SQL in this increment is
+  `V1__create_category_table.sql`.
 - **Layering.** `controller → service → repository → jpa`. The controller speaks `CategoryRequest` and
   `CategoryResponse`; the service speaks `Category`; the repository returns `Category`; the jpa layer owns
   `CategoryEntity`. `CategoryService`/`CategoryServiceImpl` and `CategoryRepository`/`CategoryRepositoryImpl` sit beside
@@ -58,13 +72,15 @@ Copied from `CLAUDE.md` and the spec. Every task's requirements implicitly inclu
   `CategoryResponse` are records, named for the entity and never for the operation — there is exactly **one** request
   record for `category`, used by both `POST` and `PUT`. No `CreateCategoryRequest`, no `UpdateCategoryRequest`, no
   `MoveCategoryRequest`, no `CategoryTreeResponse`. No value-object wrappers: no `Slug`, no `Path`, no
-  `MaterialisedPath`. `UUID` appears only on `CategoryEntity`; every layer above it uses `String`.
+  `MaterialisedPath`. `path` is a plain `String` field on `Category`, filled in by the service and mapped to the
+  response. `UUID` appears only on `CategoryEntity`; every layer above it uses `String`.
 - **Validation.** Constraints live on `CategoryRequest` only. `CategoryEntity` carries none. Constraints guard shape —
   blank, length, format, sign. Integrity stays in the database, so the duplicate slug is a 409 from
   `DataIntegrityViolationException` and never a field error.
-- **Naming.** Lookups are prefixed `find` at every layer: `findByPath`, `findByPathStartingWithOrderByPathAsc`,
+- **Naming.** Lookups are prefixed `find` at every layer: `findByParentIdIsNullAndSlug`, `findByParentIdAndSlug`,
   `findById`, `findSubtree`. Mutations use verbs: `createCategory`, `updateCategory`, `deleteCategory`, `save`,
-  `saveAll`, `deleteById`. Test methods are `givenContext_whenMethod_thenResult`, where the middle part is the method
+  `deleteById`. `existsByParentId` keeps the `exists` prefix Spring Data derives it from; it answers a question rather
+  than returning a row. Test methods are `givenContext_whenMethod_thenResult`, where the middle part is the method
   under test; the `find` prefix rule does not reach test names.
 - **Ordering.** Private methods come last in every class, after every public, protected and package-private method.
 - **TDD.** No class is written before a failing test for it has been seen to fail. Code with behaviour gets a test
@@ -93,8 +109,9 @@ was written, against a real `postgres:18-alpine` container and the real dependen
 were deleted afterwards.
 
 **Two findings change the code you would otherwise write.** Finding 6 says a primitive `boolean active` on the entity
-silently overrides the column's `default true`, and finding 8 says `like 'keyboards%'` is the wrong subtree query and
-quietly returns a sibling that is not in the subtree. Read both before Task 4.
+silently overrides the column's `default true`, and finding 8 says the composite unique index already serves every
+`parent_id` lookup, so the separate `idx_category_parent_id` a reviewer will ask for is dead weight. Read both before
+Task 4.
 
 ### Confirmed
 
@@ -137,7 +154,7 @@ quietly returns a sibling that is not in the subtree. Read both before Task 4.
 
 6. **A primitive `boolean` field defeats the column's `default true`, and this is why the service must set the
    defaults.** The same probe persisted an entity without touching `active`. Hibernate emitted
-   `insert into category (active,created_at,parent_id,path,slug,sort_order,updated_at,id) values (?,?,?,?,?,?,?,?)` —
+   `insert into category (active,created_at,parent_id,slug,sort_order,updated_at,id) values (?,?,?,?,?,?,?)` —
    `active` is in the column list — and `psql` then showed `active | f`. The `default true` in the DDL never fires,
    because Hibernate always sends a value. `sort_order` printed `0`, which happens to agree with the DDL and hides the
    same problem. **`CategoryServiceImpl` therefore applies both defaults explicitly** and Task 4 tests that it does.
@@ -146,7 +163,7 @@ quietly returns a sibling that is not in the subtree. Read both before Task 4.
    could have forced a redesign, so it was measured directly: persist, then in a second transaction `merge` a *detached
    instance with `createdAt == null`*. Hibernate logged
    ```
-   update category set active=?,parent_id=?,path=?,slug=?,sort_order=?,updated_at=? where id=?
+   update category set active=?,parent_id=?,slug=?,sort_order=?,updated_at=? where id=?
    ```
    `created_at` is absent from the `set` list, because `@CreationTimestamp` marks the value insert-only. Reading the row
    back gave `createdAt=2026-09-13T06:42:41.218534Z updatedAt=2026-09-13T06:42:41.305482Z` — the original creation
@@ -154,22 +171,34 @@ quietly returns a sibling that is not in the subtree. Read both before Task 4.
    `mapper.toModel(jpaRepository.save(mapper.toEntity(category)))`**, with the mapper ignoring both timestamps, and no
    `@MappingTarget` update method and no load-then-mutate branch is needed.
 
-8. **`like 'keyboards%'` is the wrong subtree query.** Against the real table, with `keyboards`, `keyboards/accessories`
-   and a legitimate root sibling `keyboards-2` all present:
+8. **The recursive CTE returns the subtree and nothing else, and the composite unique index already serves
+   `parent_id`, so no second index is written.** Against the migration in Task 2 loaded with
+   `keyboards → accessories → cables` plus a prefix-sharing root sibling `keyboards-2`:
    ```
-   select path from category where path like 'keyboards%' order by path;
-    keyboards
-    keyboards-2
-    keyboards/accessories
-
-   select path from category where path = 'keyboards' or path like 'keyboards/%' order by path;
-    keyboards
-    keyboards/accessories
+   with recursive subtree as (select id, parent_id, slug, 0 as depth from category where id = :keyboards
+                              union all
+                              select c.id, c.parent_id, c.slug, s.depth + 1
+                              from category c join subtree s on c.parent_id = s.id)
+   select slug, depth from subtree order by depth;
+    keyboards   | 0
+    accessories | 1
+    cables      | 2
    ```
    `keyboards-2` is a valid root — its slug differs, so `unique nulls not distinct (parent_id, slug)` does not stop it —
-   and the naive prefix picks it up. The spec writes `like 'keyboards/%'` for the same reason. **Every subtree read and
-   every move cascade in this plan looks the node up by exact path or id, and matches descendants on `path + "/"` and
-   never on `path`.** Task 5 and Task 7 each carry a test with a prefix-sharing sibling in it.
+   and it is absent, because the recursion joins on `parent_id` and a prefix is not a relationship. This is the failure
+   mode that made a stored `path` expensive to get right: `like 'keyboards%'` picks `keyboards-2` up and only
+   `like 'keyboards/%'` does not. With `parent_id` there is nothing to get wrong.
+
+   The second half of the finding is about what **not** to add. `set enable_seqscan = off;` then
+   `explain (costs off) select id from category where parent_id = :keyboards`:
+   ```
+   Index Scan using category_parent_id_slug_key on category
+     Index Cond: (parent_id = ...)
+   ```
+   and `select indexname from pg_indexes where tablename = 'category'` lists exactly `category_pkey` and
+   `category_parent_id_slug_key` (`btree (parent_id, slug) NULLS NOT DISTINCT`). `parent_id` is the leftmost column of
+   the unique index, so the CTE's join, `existsByParentId` and `findByParentIdAndSlug` are all served by it. **Do not
+   add `create index idx_category_parent_id`**; it would duplicate a prefix of an index that already exists.
 
 9. **The database enforces both integrity criteria on its own.** Against the migration in Task 2:
    ```
@@ -184,13 +213,24 @@ quietly returns a sibling that is not in the subtree. Read both before Task 4.
    `nulls not distinct` is what makes the first one fire for two roots, whose `parent_id` is null. PostgreSQL 18.6
    accepts the syntax; it needs 15 or later, and the root `docker-compose.yaml` pins `postgres:18-alpine`.
 
-10. **Every derived query name this plan uses parses.** `PartTree` from `spring-data-commons` was run directly against a
-    `CategoryEntity` shape:
+10. **Every derived query name this plan uses parses, including the null-parent one.** `PartTree` from
+    `spring-data-commons` was run directly against the committed `CategoryEntity`:
     ```
-    findByPath                          -> path SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
-    findByPathStartingWithOrderByPathAsc-> path STARTING_WITH (1): [IsStartingWith, ...] Order By path: ASC
+    findByParentIdIsNullAndSlug -> parentId IS_NULL (0): [IsNull, Null] NEVER
+                                   and slug SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
+    findByParentIdAndSlug       -> parentId SIMPLE_PROPERTY (1): [Is, Equals] NEVER
+                                   and slug SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
+    existsByParentId            -> parentId SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
     ```
-    No `@Query` is needed anywhere, which is what the query ban requires.
+    Note the arity in the parentheses: `IsNull` takes **0** arguments. `findByParentIdIsNullAndSlug(String slug)` is a
+    one-argument method, and it is a separate method rather than passing `null` to `findByParentIdAndSlug` because
+    `SIMPLE_PROPERTY` binds `parent_id = ?` and `null = null` is never true in SQL. `CategoryRepositoryImpl` hides the
+    split behind one method, so nothing above the repository knows about it.
+
+    `findSubtree` is the one query no derived name can express — a derived method cannot recurse — so it is the plan's
+    only `@Query`, and because JPQL has no CTE syntax at all it is `nativeQuery = true` with ANSI SQL. Writing
+    `with recursive` in a `@Query` **without** `nativeQuery = true` would parse, but only because Hibernate 6.2+ accepts
+    CTEs as an HQL extension, and the standing rule is standard JPQL or native.
 
 11. **`@GetMapping("/{*path}")` under `@RequestMapping("/api/v1/categories")` matches a multi-segment tail, and the
     captured value carries a leading slash.** `PathPatternParser` — the only matcher in Spring Framework 7 — parsing
@@ -252,7 +292,7 @@ quietly returns a sibling that is not in the subtree. Read both before Task 4.
     criterion 2 needs no Java in this increment — but it is a wiring claim rather than a measured one, so Task 9
     measures the live 409 and Task 9 Step 5 names the one-line fallback if it does not appear.
 
-### Where the issue is unverified, and one place it is short
+### Where the issue is unverified
 
 **A. The issue's DDL omits the nullability of the audit columns, and there is no principal to put in them.** Spec
 section 4 requires `created_at`, `created_by`, `updated_at`, `updated_by` on every business table, and issue #15's
@@ -265,12 +305,16 @@ increment that brings a principal. The alternative — inventing an `AuditorAwar
 `"system"` — writes a lie into an audit column and is not asked for.
 
 **B. "Moving a category recomputes `path` for it and every descendant" does not say what happens when the new parent is
-inside the moved subtree.** Moving `keyboards` under `keyboards/accessories` is a cycle, and the recompute this plan
-implements would happily produce `keyboards/accessories/keyboards` and an unreachable subtree. No acceptance criterion
-covers it, no constraint in the issue's DDL stops it, and `CLAUDE.md` says to build only what the issue asks for. **It
-is left unbuilt and listed under "Deliberate omissions"**, and the pull request body says so, so the reviewer decides
-whether it becomes a follow-up issue rather than discovering it in production. This is the one place where following the
-scope rule leaves a real hole, and it is flagged rather than quietly patched.
+inside the moved subtree.** Moving `keyboards` under `keyboards/accessories` is a cycle: the two rows point at each
+other, `parent_id` no longer reaches a root, and the subtree is unreachable from the forest while still being returned
+by its own recursive read. No acceptance criterion covers it and no constraint in the issue's DDL stops it — a
+self-referencing foreign key is satisfied by a cycle.
+
+**It is built, because the path derivation cannot avoid it.** Deriving a path means walking `parent_id` upward until it
+is null; a cycle makes that walk never terminate. `findPathUnder` therefore walks the ancestors of the proposed parent
+before writing anything, and if it meets the id being moved it throws `CategoryCycleException`, which the advice maps to
+409. One walk does both jobs, so the check costs nothing beyond the comparison that was already in the loop. The
+alternative — an unbounded loop in a `@Transactional` method — is not a smaller scope, it is a hang.
 
 **C. The issue says "read and write endpoints for the tree" without naming them.** The endpoints below are derived from
 the acceptance list and from the spec's own URL example, which is a read:
@@ -290,24 +334,31 @@ There is no ambiguity between `GET /{*path}` and the two `/{id}` mappings: they 
 **D. The subtree response is a flat list, not a nested tree.** The criterion is "Fetching a subtree returns the node and
 every descendant", which a flat list satisfies exactly. Assembling a nested `children` structure is an algorithm, a
 second response record and a second set of tests that nothing in the issue asks for. The list is ordered by `path`
-ascending, which is a depth-first ordering of the subtree and is deterministic; `sort_order` is stored and returned but
-is deliberately not used to order the flat list, because sorting a mixed-depth list by a sibling-ordering column
-interleaves the levels and produces a sequence that is not a tree in any reading.
+`depth, sort_order, slug` — breadth-first, siblings in their stored order, ties broken by slug so the sequence is
+deterministic. `depth` is the recursion level the CTE computes and is not a stored column. Ordering by `depth` first is
+what lets the service assign paths in one pass: a node's parent is always earlier in the list, so the parent's path is
+already known when the child is reached, and no second lookup or sort is needed. It is also why `sort_order` can be
+honoured here at all — within one depth it orders siblings, which is exactly what it means.
 
 ### Deliberate omissions
 
-- **No cycle check on move.** Finding B. Not asked for; flagged in the pull request body.
 - **No `translation` table.** Spec section 7 step 3 pairs `category` with `translation`, and #15's `### Scope` is "The
   `category` table, its migration, and read and write endpoints for the tree" — one table. `translation` is its own
   issue.
 - **No `AuditorAware`, no `@EnableJpaAuditing`, no `@CreatedBy`/`@LastModifiedBy`, no `@EntityListeners`.** Finding A.
-- **No `Slug`, `Path` or `MaterialisedPath` value object,** and no `PathBuilder` helper. The spec bans value-object
-  wrappers outright, and path derivation is three lines inside `CategoryServiceImpl`.
+- **No `Slug` or `Path` value object,** and no `PathBuilder` helper. The spec bans value-object wrappers outright, and
+  path derivation is two private methods inside `CategoryServiceImpl`.
+- **No stored `path` column, no closure table, no `ltree`.** `parent_id` is the whole of the stored structure. A stored
+  path has to be rewritten for every node under a rename or a move and no database constraint can prove it still
+  agrees with `parent_id`; a closure table is a second table and a second set of writes for a tree that is a handful
+  of levels deep; `ltree` is a PostgreSQL extension and a label grammar that the slug pattern does not fit.
+- **No depth limit.** Nothing in the issue caps nesting, the recursion terminates on its own once cycles are refused,
+  and a `max_depth` knob is a configuration value nobody requested.
 - **No second request record.** One `CategoryRequest` serves `POST` and `PUT`. `parentId` being meaningful on both is
   what makes a move a `PUT` rather than a bespoke endpoint.
 - **No `CategoryNotFoundException` message carrying SQL or a class name,** and no exception hierarchy. Two exceptions,
   each extending `RuntimeException` and nothing else, so neither gets a test.
-- **No `@Query`, no `JpaSpecificationExecutor`, no `EntityGraph`, no `@ManyToOne` self-association.** `parent_id` is a
+- **No `JpaSpecificationExecutor`, no `EntityGraph`, no `@ManyToOne` self-association.** `parent_id` is a
   plain `UUID` field on the entity. The foreign key lives in the migration where the spec puts it; an association would
   add lazy loading, cascade semantics and an N+1 risk that nothing here needs, and `findByParentId` would then silently
   resolve to a `parent.id` traversal.
@@ -356,10 +407,10 @@ Committed by this plan, all paths under `catalog-service/` unless stated:
 | Path                                                                                 | Responsibility                                                                                                                                                                         | Action |
 |--------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
 | `pom.xml`                                                                            | Gains one dependency, `org.mapstruct:mapstruct`, with no `<version>`. Nothing else changes.                                                                                            | Modify |
-| `src/main/resources/db/migration/V1__create_category_table.sql`                      | The `category` table, its self-referencing foreign key with `on delete restrict`, the unique `path`, and `unique nulls not distinct (parent_id, slug)`. The only SQL in the increment. | Create |
-| `src/main/java/com/thedarkhorse/catalog/jpa/CategoryEntity.java`                     | The `UUID` id, the UUIDv7 generator, the eight mapped columns, the two Hibernate-generated timestamps. No constraint annotations, no behaviour, no test.                               | Create |
-| `src/main/java/com/thedarkhorse/catalog/jpa/CategoryJpaRepository.java`              | Two derived queries plus what `JpaRepository` gives. Spring generates the implementation, so no test.                                                                                  | Create |
-| `src/main/java/com/thedarkhorse/catalog/model/Category.java`                         | The model every layer above jpa speaks. Lombok, ids as `String`. No behaviour, no test.                                                                                                | Create |
+| `src/main/resources/db/migration/V1__create_category_table.sql`                      | The `category` table, its self-referencing foreign key with `on delete restrict`, and `unique nulls not distinct (parent_id, slug)`. The only SQL in the increment.                    | Create |
+| `src/main/java/com/thedarkhorse/catalog/jpa/CategoryEntity.java`                     | The `UUID` id, the UUIDv7 generator, the seven mapped columns, the two Hibernate-generated timestamps. No constraint annotations, no behaviour, no test.                               | Create |
+| `src/main/java/com/thedarkhorse/catalog/jpa/CategoryJpaRepository.java`              | Three derived queries, the native `with recursive` subtree query, and what `JpaRepository` gives. Spring generates the implementation, so no test.                                     | Create |
+| `src/main/java/com/thedarkhorse/catalog/model/Category.java`                         | The model every layer above jpa speaks. Lombok, ids as `String`, plus the derived `path` the service fills in. No behaviour, no test.                                                   | Create |
 | `src/main/java/com/thedarkhorse/catalog/mapper/CategoryMapper.java`                  | Entity ↔ model, request → model, model → response. MapStruct-generated, so no test.                                                                                                    | Create |
 | `src/main/java/com/thedarkhorse/catalog/repository/CategoryRepository.java`          | The plain contract the service depends on. Models in, models out, ids as `String`.                                                                                                     | Create |
 | `src/main/java/com/thedarkhorse/catalog/repository/CategoryRepositoryImpl.java`      | Delegates to `CategoryJpaRepository`, converts `String` ids to `UUID`, maps entities to models. Has behaviour, so it is tested.                                                        | Create |
@@ -368,14 +419,15 @@ Committed by this plan, all paths under `catalog-service/` unless stated:
 | `src/main/java/com/thedarkhorse/catalog/controller/CategoryRequest.java`             | One request record for the entity, carrying every constraint in the increment.                                                                                                         | Create |
 | `src/main/java/com/thedarkhorse/catalog/controller/CategoryResponse.java`            | Read-only, so a record. Ids as `String`.                                                                                                                                               | Create |
 | `src/main/java/com/thedarkhorse/catalog/controller/CategoryController.java`          | The four endpoints. Strips the leading `/` the capture-all pattern includes.                                                                                                           | Create |
-| `src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java`     | Gains two `@ExceptionHandler` methods: 404 and 409.                                                                                                                                    | Modify |
+| `src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java`     | Gains three `@ExceptionHandler` methods: one 404 and two 409s.                                                                                                                          | Modify |
 | `src/main/java/com/thedarkhorse/catalog/exception/CategoryNotFoundException.java`    | Extends `RuntimeException` and nothing else, so no test.                                                                                                                               | Create |
 | `src/main/java/com/thedarkhorse/catalog/exception/CategoryHasChildrenException.java` | Extends `RuntimeException` and nothing else, so no test.                                                                                                                               | Create |
+| `src/main/java/com/thedarkhorse/catalog/exception/CategoryCycleException.java`       | Extends `RuntimeException` and nothing else, so no test.                                                                                                                               | Create |
 | `src/main/java/com/thedarkhorse/catalog/config/CatalogConfiguration.java`            | Three `@Bean` methods that call three constructors. No behaviour, no test.                                                                                                             | Create |
 | `src/test/java/com/thedarkhorse/catalog/repository/CategoryRepositoryImplTest.java`  | Delegation and mapping, against a mocked `CategoryJpaRepository`.                                                                                                                      | Create |
-| `src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java`        | Path derivation, defaults, subtree assembly, delete refusal, move cascade. The bulk of the increment's tests.                                                                          | Create |
+| `src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java`        | Path derivation, path resolution, defaults, subtree assembly, delete refusal, cycle refusal. The bulk of the increment's tests.                                                        | Create |
 | `src/test/java/com/thedarkhorse/catalog/controller/CategoryControllerTest.java`      | Leading-slash stripping and delegation.                                                                                                                                                | Create |
-| `src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java` | Gains two tests for the two new handler methods.                                                                                                                                       | Modify |
+| `src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java` | Gains three tests for the three new handler methods.                                                                                                                                   | Modify |
 
 Not touched: `.config-repo/` (Task 1 shows why), the root `pom.xml`, the root `docker-compose.yaml`, `lombok.config`,
 `.mvn/jvm.config`, `.github/`, `CLAUDE.md`, `README.md`, `discovery-server/`, `gateway/`, `config-server/`, the spec,
@@ -386,7 +438,7 @@ Temporary, never committed:
 | Path                          | Responsibility                                                                                                                            |
 |-------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
 | `.scratch/ValidateProbe.java` | Boots Hibernate against the real container and runs `hbm2ddl.auto=validate` against the committed entity. Task 2 Cycle A's red and green. |
-| `.scratch/QueryProbe.java`    | Runs Spring Data's own `PartTree` parser over the two derived query names against the committed entity. Task 2 Cycle B.                   |
+| `.scratch/QueryProbe.java`    | Runs Spring Data's own `PartTree` parser over the three derived query names against the committed entity. Task 2 Cycle B.                 |
 | `.scratch/Probe.java`         | The HTTP client, because the allowlist has none. Task 9.                                                                                  |
 | `.scratch/` itself            | Deleted in Task 9 Step 10, before the branch is pushed.                                                                                   |
 
@@ -521,13 +573,15 @@ cycles, two commits.
   `docker-compose.yaml` `postgres` service publishing 5432 with `catalog_db`; `.config-repo` supplying
   `ddl-auto: validate` and the datasource.
 - Produces: table `category` with columns
-  `id, parent_id, slug, path, sort_order, active, created_at, created_by, updated_at, updated_by`; the class
+  `id, parent_id, slug, sort_order, active, created_at, created_by, updated_at, updated_by`; the class
   `com.thedarkhorse.catalog.jpa.CategoryEntity` with Lombok getters and setters for `UUID getId/setId`,
-  `UUID getParentId/setParentId`, `String getSlug/setSlug`, `String getPath/setPath`, `int getSortOrder/setSortOrder`,
+  `UUID getParentId/setParentId`, `String getSlug/setSlug`, `int getSortOrder/setSortOrder`,
   `boolean isActive/setActive`, `Instant getCreatedAt/setCreatedAt`, `Instant getUpdatedAt/setUpdatedAt`; and the
   interface `com.thedarkhorse.catalog.jpa.CategoryJpaRepository extends JpaRepository<CategoryEntity, UUID>` adding
-  `Optional<CategoryEntity> findByPath(String path)` and
-  `List<CategoryEntity> findByPathStartingWithOrderByPathAsc(String prefix)`. Task 3 consumes all three.
+  `Optional<CategoryEntity> findByParentIdIsNullAndSlug(String slug)`,
+  `Optional<CategoryEntity> findByParentIdAndSlug(UUID parentId, String slug)`,
+  `boolean existsByParentId(UUID parentId)` and `List<CategoryEntity> findSubtree(UUID id)`. Task 3 consumes all
+  three.
 
 ### Cycle A — the table exists and the entity validates against it
 
@@ -572,7 +626,6 @@ public class ValidateProbe {
             java.util.UUID id = factory.fromTransaction(session -> {
                 CategoryEntity entity = new CategoryEntity();
                 entity.setSlug("keyboards");
-                entity.setPath("keyboards");
                 session.persist(entity);
                 return entity.getId();
             });
@@ -636,8 +689,6 @@ public class CategoryEntity {
 
     private String slug;
 
-    private String path;
-
     private int sortOrder;
 
     private boolean active;
@@ -675,25 +726,26 @@ Schema-validation: missing table [category]
 Create `catalog-service/src/main/resources/db/migration/V1__create_category_table.sql`:
 
 ```sql
-create table category (
-    id         uuid          primary key,
-    parent_id  uuid          null references category (id) on delete restrict,
-    slug       varchar(100)  not null,
-    path       varchar(500)  not null unique,
-    sort_order int           not null default 0,
-    active     boolean       not null default true,
-    created_at timestamptz   not null,
-    created_by varchar(64)   null,
-    updated_at timestamptz   not null,
-    updated_by varchar(64)   null,
+create table category
+(
+    id         uuid primary key,
+    parent_id  uuid null references category (id) on delete restrict,
+    slug       varchar(100) not null,
+    sort_order int          not null default 0,
+    active     boolean      not null default true,
+    created_at timestamptz  not null,
+    created_by varchar(64) null,
+    updated_at timestamptz  not null,
+    updated_by varchar(64) null,
     unique nulls not distinct (parent_id, slug)
 );
-
-create index idx_category_parent_id on category (parent_id);
 ```
 
-No comments, per `CLAUDE.md`. The index on `parent_id` is not decoration: PostgreSQL does not index the referencing side
-of a foreign key automatically, and `on delete restrict` makes the database check that side on every delete.
+No comments, per `CLAUDE.md`. No `path` column: the path is derived from `parent_id` on every read and stored nowhere.
+And no `create index idx_category_parent_id`, which is the change a reviewer is most likely to ask for. PostgreSQL does
+not index the referencing side of a foreign key automatically, but it does not have to here: `parent_id` is the leftmost
+column of `category_parent_id_slug_key`, so the unique constraint's own btree already serves every `parent_id` lookup,
+including the one `on delete restrict` performs. Finding 8 has the plan.
 
 - [ ] **Step 7: Apply it and run the probe to see it pass**
 
@@ -709,7 +761,6 @@ Expected from `psql`:
 
 ```
 CREATE TABLE
-CREATE INDEX
 ```
 
 Expected from the probe:
@@ -729,7 +780,7 @@ and it is fixed there rather than here because the DDL is the issue's and the de
 Run:
 
 ```
-docker exec postgres psql -U catalog -d catalog_db -c "insert into category (id, parent_id, slug, path, created_at, updated_at) values ('00000000-0000-0000-0000-000000000002', null, 'keyboards', 'keyboards-2', now(), now());"
+docker exec postgres psql -U catalog -d catalog_db -c "insert into category (id, parent_id, slug, created_at, updated_at) values ('00000000-0000-0000-0000-000000000002', null, 'keyboards', now(), now());"
 ```
 
 Expected:
@@ -742,8 +793,8 @@ DETAIL:  Key (parent_id, slug)=(null, keyboards) already exists.
 That is acceptance criterion 2 at the database. Then:
 
 ```
-docker exec postgres psql -U catalog -d catalog_db -c "insert into category (id, parent_id, slug, path, created_at, updated_at) select '00000000-0000-0000-0000-000000000003', id, 'accessories', 'keyboards/accessories', now(), now() from category where path = 'keyboards';"
-docker exec postgres psql -U catalog -d catalog_db -c "delete from category where path = 'keyboards';"
+docker exec postgres psql -U catalog -d catalog_db -c "insert into category (id, parent_id, slug, created_at, updated_at) select '00000000-0000-0000-0000-000000000003', id, 'accessories', now(), now() from category where parent_id is null and slug = 'keyboards';"
+docker exec postgres psql -U catalog -d catalog_db -c "delete from category where parent_id is null and slug = 'keyboards';"
 ```
 
 Expected:
@@ -778,12 +829,12 @@ Expected: `BUILD SUCCESS`, `Tests run: 4` in `catalog-service` — unchanged, be
 ```bash
 git add catalog-service/src/main/resources/db/migration/V1__create_category_table.sql \
         catalog-service/src/main/java/com/thedarkhorse/catalog/jpa/CategoryEntity.java
-git commit -m "feat(catalog): add category table with materialised path
+git commit -m "feat(catalog): add category table keyed on parent id
 
 Refs #15"
 ```
 
-### Cycle B — the two derived queries
+### Cycle B — the queries
 
 - [ ] **Step 1: Write the failing check**
 
@@ -799,7 +850,7 @@ import org.springframework.data.repository.query.parser.PartTree;
 public class QueryProbe {
 
     public static void main(String[] args) {
-        String[] methods = {"findByPath", "findByPathStartingWithOrderByPathAsc"};
+        String[] methods = {"findByParentIdIsNullAndSlug", "findByParentIdAndSlug", "existsByParentId"};
         for (String method : methods) {
             System.out.println(method + " -> " + new PartTree(method, CategoryEntity.class));
         }
@@ -819,13 +870,19 @@ java -cp "catalog-service/target/dependency/*:catalog-service/target/classes" .s
 
 Expected: it passes already, because `PartTree` only needs the entity. **This is not a red step and must not be reported
 as one.** The interface below has no behaviour of ours in it, so `CLAUDE.md` gives it no test and there is no failing
-state to manufacture; the probe exists to prove the two names resolve against the real entity before they are committed,
-and Task 9 Step 3 proves the repository bean is actually created at startup. Record the output verbatim:
+state to manufacture; the probe exists to prove the three names resolve against the real entity before they are
+committed, and Task 9 Step 3 proves the repository bean is actually created at startup. Record the output verbatim:
 
 ```
-findByPath -> path SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
-findByPathStartingWithOrderByPathAsc -> path STARTING_WITH (1): [IsStartingWith, StartingWith, StartsWith] NEVER Order By path: ASC
+findByParentIdIsNullAndSlug -> parentId IS_NULL (0): [IsNull, Null] NEVER and slug SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
+findByParentIdAndSlug -> parentId SIMPLE_PROPERTY (1): [Is, Equals] NEVER and slug SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
+existsByParentId -> parentId SIMPLE_PROPERTY (1): [Is, Equals] NEVER Order By
 ```
+
+`IS_NULL (0)` is the detail that matters: the null branch takes no argument, so it has to be a second method name rather
+than `findByParentIdAndSlug(null, slug)`, which would bind `parent_id = null` and match no row. `findSubtree` is absent
+from the probe because `PartTree` has nothing to say about it — no derived name can recurse, so it is the one `@Query`
+in the increment.
 
 - [ ] **Step 3: Write the interface**
 
@@ -834,20 +891,71 @@ Create `catalog-service/src/main/java/com/thedarkhorse/catalog/jpa/CategoryJpaRe
 ```java
 package com.thedarkhorse.catalog.jpa;
 
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CategoryJpaRepository extends JpaRepository<CategoryEntity, UUID> {
 
-    Optional<CategoryEntity> findByPath(String path);
+    Optional<CategoryEntity> findByParentIdIsNullAndSlug(String slug);
 
-    List<CategoryEntity> findByPathStartingWithOrderByPathAsc(String prefix);
+    Optional<CategoryEntity> findByParentIdAndSlug(UUID parentId, String slug);
+
+    boolean existsByParentId(UUID parentId);
+
+    @Query(value = """
+            with recursive subtree as (select c.id,
+                                              c.parent_id,
+                                              c.slug,
+                                              c.sort_order,
+                                              c.active,
+                                              c.created_at,
+                                              c.updated_at,
+                                              0 as depth
+                                       from category c
+                                       where c.id = :id
+                                       union all
+                                       select c.id,
+                                              c.parent_id,
+                                              c.slug,
+                                              c.sort_order,
+                                              c.active,
+                                              c.created_at,
+                                              c.updated_at,
+                                              s.depth + 1
+                                       from category c
+                                                join subtree s on c.parent_id = s.id)
+            select id, parent_id, slug, sort_order, active, created_at, updated_at
+            from subtree
+            order by depth, sort_order, slug
+            """, nativeQuery = true)
+    List<CategoryEntity> findSubtree(@Param("id") UUID id);
 }
 ```
 
 No `@Repository`: the spec bans it, and Spring Data registers the interface without it.
+
+Four things about `findSubtree` are deliberate and a reviewer will ask about each.
+
+`nativeQuery = true`, because JPQL has no CTE syntax. Hibernate 6.2 and later accept `with recursive` in HQL, so
+dropping `nativeQuery` would compile and run — and would silently bind this repository to Hibernate. The standing rule
+is standard JPQL or native SQL, and `with recursive` is SQL-99, supported by PostgreSQL, MySQL 8, MariaDB, SQL Server,
+Oracle and SQLite alike.
+
+The column list is explicit and excludes `created_by` and `updated_by`. A native query returns a result set Hibernate
+maps back onto `CategoryEntity` by column name, and the entity maps seven columns; selecting `*` would return two more
+that no field claims. `depth` is computed for the ordering and dropped by the outer select for the same reason.
+
+`order by depth` is load-bearing rather than cosmetic. The service assigns paths in a single pass over this list and
+relies on a node's parent having already been seen. Breadth-first guarantees that; remove the ordering and the path
+assembly in Task 5 breaks for any subtree deeper than one level.
+
+`:id` is a named parameter with `@Param`, not `?1`. Spring Data binds named parameters in native queries the same way
+it does in JPQL, and the name survives the `-parameters` compiler flag being absent.
 
 - [ ] **Step 4: Run the gate**
 
@@ -859,7 +967,7 @@ Expected: `BUILD SUCCESS`, `Tests run: 4` in `catalog-service`.
 
 ```bash
 git add catalog-service/src/main/java/com/thedarkhorse/catalog/jpa/CategoryJpaRepository.java
-git commit -m "feat(catalog): add category jpa repository with path lookups
+git commit -m "feat(catalog): add category jpa repository with a recursive subtree query
 
 Refs #15"
 ```
@@ -892,8 +1000,8 @@ and reject the service above it.
   `CategoryEntity toEntity(Category)`, `Category toModel(CategoryRequest)` — added in Task 8 — and
   `CategoryResponse toResponse(Category)` and `List<CategoryResponse> toResponses(List<Category>)`, also Task 8.
   `com.thedarkhorse.catalog.repository.CategoryRepository` with `Optional<Category> findById(String id)`,
-  `Optional<Category> findByPath(String path)`, `List<Category> findByPathStartingWith(String prefix)`,
-  `Category save(Category category)`, `List<Category> saveAll(List<Category> categories)` and
+  `Optional<Category> findByParentIdAndSlug(String parentId, String slug)`, `List<Category> findSubtree(String id)`,
+  `boolean existsByParentId(String parentId)`, `Category save(Category category)` and
   `void deleteById(String id)`. `CategoryRepositoryImpl` with the constructor
   `CategoryRepositoryImpl(CategoryJpaRepository jpaRepository, CategoryMapper mapper)`. Tasks 4 to 8 consume all of
   these.
@@ -905,30 +1013,31 @@ Create `catalog-service/src/test/java/com/thedarkhorse/catalog/repository/Catego
 ```java
 package com.thedarkhorse.catalog.repository;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.jpa.CategoryJpaRepository;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
 import com.thedarkhorse.catalog.model.Category;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class CategoryRepositoryImplTest {
 
     private static final UUID ID = UUID.fromString("01920000-0000-7000-8000-000000000001");
     private static final UUID PARENT_ID = UUID.fromString("01920000-0000-7000-8000-000000000002");
     private static final String SLUG = "accessories";
-    private static final String PATH = "keyboards/accessories";
-    private static final String DESCENDANT_PREFIX = "keyboards/";
+    private static final String ROOT_SLUG = "keyboards";
     private static final int SORT_ORDER = 3;
 
     private final CategoryJpaRepository jpaRepository = mock(CategoryJpaRepository.class);
@@ -936,44 +1045,68 @@ class CategoryRepositoryImplTest {
     private final CategoryRepositoryImpl repository = new CategoryRepositoryImpl(jpaRepository, mapper);
 
     @Test
-    void givenAStoredEntity_whenFindByPath_thenTheModelCarriesTheIdsAsStrings() {
-        when(jpaRepository.findByPath(PATH)).thenReturn(Optional.of(entity()));
+    void givenAStoredEntity_whenFindById_thenTheModelCarriesTheIdsAsStrings() {
+        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
 
-        Optional<Category> found = repository.findByPath(PATH);
+        Optional<Category> found = repository.findById(ID.toString());
 
         assertThat(found).isPresent();
         assertThat(found.get().getId()).isEqualTo(ID.toString());
         assertThat(found.get().getParentId()).isEqualTo(PARENT_ID.toString());
         assertThat(found.get().getSlug()).isEqualTo(SLUG);
-        assertThat(found.get().getPath()).isEqualTo(PATH);
         assertThat(found.get().getSortOrder()).isEqualTo(SORT_ORDER);
         assertThat(found.get().getActive()).isTrue();
-    }
-
-    @Test
-    void givenNoRow_whenFindByPath_thenEmpty() {
-        when(jpaRepository.findByPath(PATH)).thenReturn(Optional.empty());
-
-        assertThat(repository.findByPath(PATH)).isEmpty();
-    }
-
-    @Test
-    void givenAStringId_whenFindById_thenTheJpaRepositoryIsCalledWithTheUuid() {
-        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
-
-        assertThat(repository.findById(ID.toString())).isPresent();
         verify(jpaRepository).findById(ID);
     }
 
     @Test
-    void givenAPrefix_whenFindByPathStartingWith_thenTheOrderedDerivedQueryIsUsed() {
-        when(jpaRepository.findByPathStartingWithOrderByPathAsc(DESCENDANT_PREFIX))
-                .thenReturn(List.of(entity()));
+    void givenAStoredEntity_whenFindById_thenThePathIsLeftForTheServiceToBuild() {
+        when(jpaRepository.findById(ID)).thenReturn(Optional.of(entity()));
 
-        List<Category> found = repository.findByPathStartingWith(DESCENDANT_PREFIX);
+        assertThat(repository.findById(ID.toString()).orElseThrow().getPath()).isNull();
+    }
 
-        assertThat(found).extracting(Category::getPath).containsExactly(PATH);
-        verify(jpaRepository).findByPathStartingWithOrderByPathAsc(DESCENDANT_PREFIX);
+    @Test
+    void givenNoParentId_whenFindByParentIdAndSlug_thenTheNullSafeDerivedQueryIsUsed() {
+        when(jpaRepository.findByParentIdIsNullAndSlug(ROOT_SLUG)).thenReturn(Optional.of(entity()));
+
+        assertThat(repository.findByParentIdAndSlug(null, ROOT_SLUG)).isPresent();
+        verify(jpaRepository).findByParentIdIsNullAndSlug(ROOT_SLUG);
+        verify(jpaRepository, never()).findByParentIdAndSlug(any(), any());
+    }
+
+    @Test
+    void givenAParentId_whenFindByParentIdAndSlug_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.findByParentIdAndSlug(PARENT_ID, SLUG)).thenReturn(Optional.of(entity()));
+
+        assertThat(repository.findByParentIdAndSlug(PARENT_ID.toString(), SLUG)).isPresent();
+        verify(jpaRepository).findByParentIdAndSlug(PARENT_ID, SLUG);
+        verify(jpaRepository, never()).findByParentIdIsNullAndSlug(any());
+    }
+
+    @Test
+    void givenNoRow_whenFindByParentIdAndSlug_thenEmpty() {
+        when(jpaRepository.findByParentIdAndSlug(PARENT_ID, SLUG)).thenReturn(Optional.empty());
+
+        assertThat(repository.findByParentIdAndSlug(PARENT_ID.toString(), SLUG)).isEmpty();
+    }
+
+    @Test
+    void givenANodeId_whenFindSubtree_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.findSubtree(ID)).thenReturn(List.of(entity()));
+
+        List<Category> subtree = repository.findSubtree(ID.toString());
+
+        assertThat(subtree).extracting(Category::getId).containsExactly(ID.toString());
+        verify(jpaRepository).findSubtree(ID);
+    }
+
+    @Test
+    void givenAParentWithChildren_whenExistsByParentId_thenTheJpaRepositoryIsCalledWithTheUuid() {
+        when(jpaRepository.existsByParentId(ID)).thenReturn(true);
+
+        assertThat(repository.existsByParentId(ID.toString())).isTrue();
+        verify(jpaRepository).existsByParentId(ID);
     }
 
     @Test
@@ -986,7 +1119,7 @@ class CategoryRepositoryImplTest {
         verify(jpaRepository).save(captor.capture());
         assertThat(captor.getValue().getId()).isNull();
         assertThat(captor.getValue().getParentId()).isEqualTo(PARENT_ID);
-        assertThat(captor.getValue().getPath()).isEqualTo(PATH);
+        assertThat(captor.getValue().getSlug()).isEqualTo(SLUG);
         assertThat(captor.getValue().getSortOrder()).isEqualTo(SORT_ORDER);
         assertThat(captor.getValue().isActive()).isTrue();
         assertThat(saved.getId()).isEqualTo(ID.toString());
@@ -1004,16 +1137,6 @@ class CategoryRepositoryImplTest {
     }
 
     @Test
-    void givenModels_whenSaveAll_thenEveryOneIsSavedAndMappedBack() {
-        when(jpaRepository.saveAll(any())).thenReturn(List.of(entity()));
-
-        List<Category> saved = repository.saveAll(List.of(model(ID.toString())));
-
-        assertThat(saved).extracting(Category::getId).containsExactly(ID.toString());
-        verify(jpaRepository).saveAll(any());
-    }
-
-    @Test
     void givenAStringId_whenDeleteById_thenTheJpaRepositoryIsCalledWithTheUuid() {
         repository.deleteById(ID.toString());
 
@@ -1025,17 +1148,22 @@ class CategoryRepositoryImplTest {
         entity.setId(ID);
         entity.setParentId(PARENT_ID);
         entity.setSlug(SLUG);
-        entity.setPath(PATH);
         entity.setSortOrder(SORT_ORDER);
         entity.setActive(true);
         return entity;
     }
 
     private Category model(String id) {
-        return new Category(id, PARENT_ID.toString(), SLUG, PATH, SORT_ORDER, true);
+        return new Category(id, PARENT_ID.toString(), SLUG, null, SORT_ORDER, true);
     }
 }
 ```
+
+Two of these tests are about the seam the parent_id design creates. The null-parent pair proves
+`findByParentIdAndSlug(null, slug)` reaches `findByParentIdIsNullAndSlug` and never the two-argument query — finding 10
+explains why `parent_id = null` would match nothing — and `verify(..., never())` on the other method is what makes the
+branch observable. `givenAStoredEntity_whenFindById_thenThePathIsLeftForTheServiceToBuild` pins the other half of the
+contract: the repository returns models with a null `path`, because nothing at this layer knows the ancestors.
 
 The mapper is the real `CategoryMapperImpl`, not a mock, because "mapping happened" is one of the two things the spec
 asks this test to assert and a mocked mapper would assert nothing.
@@ -1107,13 +1235,15 @@ package com.thedarkhorse.catalog.mapper;
 
 import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.model.Category;
-import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
+
+import java.util.List;
 
 @Mapper
 public interface CategoryMapper {
 
+    @Mapping(target = "path", ignore = true)
     Category toModel(CategoryEntity entity);
 
     List<Category> toModels(List<CategoryEntity> entities);
@@ -1123,6 +1253,11 @@ public interface CategoryMapper {
     CategoryEntity toEntity(Category category);
 }
 ```
+
+`@Mapping(target = "path", ignore = true)` on `toModel` is not optional decoration: `Category` has a `path` and
+`CategoryEntity` does not, and MapStruct fails the build on an unmapped target property rather than leaving it null
+quietly. Saying so explicitly is also the documentation — `path` is the service's to fill in, and the mapper is
+declaring that it will not.
 
 Plain `@Mapper`, never `@Mapper(componentModel = "spring")`: the Spring component model makes MapStruct write
 `@Component` onto the generated class, which is the banned annotation. Task 8 exposes the mapper as an `@Bean`.
@@ -1146,17 +1281,20 @@ public interface CategoryRepository {
 
     Optional<Category> findById(String id);
 
-    Optional<Category> findByPath(String path);
+    Optional<Category> findByParentIdAndSlug(String parentId, String slug);
 
-    List<Category> findByPathStartingWith(String prefix);
+    List<Category> findSubtree(String id);
+
+    boolean existsByParentId(String parentId);
 
     Category save(Category category);
-
-    List<Category> saveAll(List<Category> categories);
 
     void deleteById(String id);
 }
 ```
+
+No `saveAll`. Nothing in this increment writes more than one row: creating writes one, updating writes one, and moving
+a category writes one, because the descendants keep their `parent_id` and their paths were never stored.
 
 - [ ] **Step 7: Write the implementation**
 
@@ -1169,6 +1307,7 @@ import com.thedarkhorse.catalog.jpa.CategoryEntity;
 import com.thedarkhorse.catalog.jpa.CategoryJpaRepository;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.model.Category;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -1189,13 +1328,18 @@ public class CategoryRepositoryImpl implements CategoryRepository {
     }
 
     @Override
-    public Optional<Category> findByPath(String path) {
-        return jpaRepository.findByPath(path).map(mapper::toModel);
+    public Optional<Category> findByParentIdAndSlug(String parentId, String slug) {
+        return findEntityByParentIdAndSlug(parentId, slug).map(mapper::toModel);
     }
 
     @Override
-    public List<Category> findByPathStartingWith(String prefix) {
-        return mapper.toModels(jpaRepository.findByPathStartingWithOrderByPathAsc(prefix));
+    public List<Category> findSubtree(String id) {
+        return mapper.toModels(jpaRepository.findSubtree(UUID.fromString(id)));
+    }
+
+    @Override
+    public boolean existsByParentId(String parentId) {
+        return jpaRepository.existsByParentId(UUID.fromString(parentId));
     }
 
     @Override
@@ -1204,30 +1348,36 @@ public class CategoryRepositoryImpl implements CategoryRepository {
     }
 
     @Override
-    public List<Category> saveAll(List<Category> categories) {
-        return mapper.toModels(jpaRepository.saveAll(categories.stream().map(mapper::toEntity).toList()));
-    }
-
-    @Override
     public void deleteById(String id) {
         jpaRepository.deleteById(UUID.fromString(id));
+    }
+
+    private Optional<CategoryEntity> findEntityByParentIdAndSlug(String parentId, String slug) {
+        if (parentId == null) {
+            return jpaRepository.findByParentIdIsNullAndSlug(slug);
+        }
+        return jpaRepository.findByParentIdAndSlug(UUID.fromString(parentId), slug);
     }
 }
 ```
 
-No `@Repository`, no `@Transactional`: the spec puts the first on the ban list and the second on the service.
+No `@Repository`, no `@Transactional`: the spec puts the first on the ban list and the second on the service. The
+private method comes last, which is the ordering rule, and it is a private method rather than an inline `if` so that
+the two derived queries are one seam: the service asks for "the child of this parent with this slug" and a root is not
+a special case above this layer. `UUID.fromString` is called only on the branch that has an id, so the null parent
+never reaches it.
 
 - [ ] **Step 8: Run the test to verify it passes**
 
 Run: `mvn -B -pl catalog-service test -Dtest=CategoryRepositoryImplTest`
 
-Expected: `Tests run: 8, Failures: 0, Errors: 0, Skipped: 0`.
+Expected: `Tests run: 10, Failures: 0, Errors: 0, Skipped: 0`.
 
 - [ ] **Step 9: Run the gate**
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 12` in `catalog-service`.
+Expected: `BUILD SUCCESS`, `Tests run: 14` in `catalog-service`.
 
 - [ ] **Step 10: Commit**
 
@@ -1245,10 +1395,11 @@ Refs #15"
 
 ---
 
-## Task 4: Creating a category derives its path from the parent
+## Task 4: Creating a category derives its path from the parent chain
 
-Covers acceptance criterion 1: creating a child under `keyboards` with slug `accessories` stores
-`path = 'keyboards/accessories'`. Also fixes finding 6 by making the service own the two DDL defaults.
+Covers acceptance criterion 1: creating a child under `keyboards` with slug `accessories` returns
+`path = 'keyboards/accessories'`. Nothing is stored but `parent_id`; the path is walked up from the parent and put on
+the response. Also fixes finding 6 by making the service own the two DDL defaults.
 
 **Files:**
 
@@ -1273,90 +1424,109 @@ Create `catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryS
 ```java
 package com.thedarkhorse.catalog.service;
 
+import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
+import com.thedarkhorse.catalog.model.Category;
+import com.thedarkhorse.catalog.repository.CategoryRepository;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
+import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.thedarkhorse.catalog.exception.CategoryNotFoundException;
-import com.thedarkhorse.catalog.model.Category;
-import com.thedarkhorse.catalog.repository.CategoryRepository;
-import java.util.Optional;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
 class CategoryServiceImplTest {
 
-    private static final String PARENT_ID = "01920000-0000-7000-8000-000000000001";
+    private static final String ROOT_ID = "01920000-0000-7000-8000-000000000001";
     private static final String CHILD_ID = "01920000-0000-7000-8000-000000000002";
     private static final String MISSING_ID = "01920000-0000-7000-8000-0000000000ff";
-    private static final String PARENT_SLUG = "keyboards";
+
+    private static final String ROOT_SLUG = "keyboards";
     private static final String CHILD_SLUG = "accessories";
-    private static final String PARENT_PATH = "keyboards";
+    private static final String GRANDCHILD_SLUG = "cables";
+
+    private static final String ROOT_PATH = "keyboards";
     private static final String CHILD_PATH = "keyboards/accessories";
+    private static final String GRANDCHILD_PATH = "keyboards/accessories/cables";
 
     private final CategoryRepository repository = mock(CategoryRepository.class);
     private final CategoryServiceImpl service = new CategoryServiceImpl(repository);
 
     @Test
     void givenAParent_whenCreateCategory_thenThePathIsTheParentPathAndTheSlug() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, PARENT_ID, CHILD_SLUG, null, 0, true));
+        Category created = service.createCategory(new Category(null, ROOT_ID, CHILD_SLUG, null, 0, true));
 
         assertThat(created.getPath()).isEqualTo(CHILD_PATH);
     }
 
     @Test
-    void givenNoParent_whenCreateCategory_thenThePathIsTheSlugAlone() {
+    void givenANestedParent_whenCreateCategory_thenThePathIsBuiltByWalkingEveryAncestor() {
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, null, PARENT_SLUG, null, 0, true));
+        Category created = service.createCategory(new Category(null, CHILD_ID, GRANDCHILD_SLUG, null, 0, true));
 
-        assertThat(created.getPath()).isEqualTo(PARENT_PATH);
+        assertThat(created.getPath()).isEqualTo(GRANDCHILD_PATH);
+    }
+
+    @Test
+    void givenNoParent_whenCreateCategory_thenThePathIsTheSlugAloneAndNoAncestorIsRead() {
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Category created = service.createCategory(new Category(null, null, ROOT_SLUG, null, 0, true));
+
+        assertThat(created.getPath()).isEqualTo(ROOT_PATH);
+        verify(repository, never()).findById(any());
     }
 
     @Test
     void givenAnUnknownParent_whenCreateCategory_thenCategoryNotFound() {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.createCategory(new Category(null, MISSING_ID, CHILD_SLUG, null, 0, true)))
-                .isInstanceOf(CategoryNotFoundException.class);
+        ThrowingCallable throwingCallable =
+                () -> service.createCategory(new Category(null, MISSING_ID, CHILD_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
+        verify(repository, never()).save(any());
     }
 
     @Test
     void givenNoSortOrderAndNoActive_whenCreateCategory_thenTheDdlDefaultsAreApplied() {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, null, PARENT_SLUG, null, null, null));
+        Category created = service.createCategory(new Category(null, null, ROOT_SLUG, null, null, null));
 
         assertThat(created.getSortOrder()).isZero();
         assertThat(created.getActive()).isTrue();
     }
 
-    @Test
-    void givenAnIdOnTheIncomingModel_whenCreateCategory_thenItIsNotCarriedIntoTheSavedCategory() {
-        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.createCategory(new Category(CHILD_ID, null, PARENT_SLUG, null, 0, true));
-
-        ArgumentCaptor<Category> captor = ArgumentCaptor.forClass(Category.class);
-        verify(repository).save(captor.capture());
-        assertThat(captor.getValue().getId()).isNull();
+    private Category root() {
+        return new Category(ROOT_ID, null, ROOT_SLUG, null, 0, true);
     }
 
-    private Category parent() {
-        return new Category(PARENT_ID, null, PARENT_SLUG, PARENT_PATH, 0, true);
+    private Category child() {
+        return new Category(CHILD_ID, ROOT_ID, CHILD_SLUG, null, 0, true);
     }
 }
 ```
 
-The last test matters because `CategoryRequest` has no `id` field, so a client cannot send one — but
-`CategoryMapper.toModel(CategoryRequest)` in Task 8 produces a `Category` and nothing else stops a future caller from
-populating it. Clearing it in `createCategory` is what keeps `POST` from silently overwriting an existing row.
+The fixtures carry a null `path`, which is the point. With no `path` column there is nothing for the repository to
+return, so the second test is the one that proves the service walks: `cables` under `accessories` can only reach
+`keyboards/accessories/cables` by following `parent_id` twice. A service that read a parent's `path` field would get
+`null` here and produce `null/cables`. The third test's `verify(repository, never()).findById(any())` pins the other
+end: a root costs zero reads.
+
+Tasks 5, 6 and 7 add constants, fixtures and tests to this same file rather than creating new ones. The class ends at
+21 tests.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1414,6 +1584,9 @@ import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 public class CategoryServiceImpl implements CategoryService {
 
     private static final String SEPARATOR = "/";
@@ -1429,25 +1602,41 @@ public class CategoryServiceImpl implements CategoryService {
     @Override
     @Transactional
     public Category createCategory(Category category) {
-        category.setId(null);
-        category.setPath(findPathUnder(category.getParentId(), category.getSlug()));
+        String path = findPathUnder(category.getParentId(), category.getSlug());
         category.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         category.setActive(category.getActive() == null || category.getActive());
-        return repository.save(category);
+        Category created = repository.save(category);
+        created.setPath(path);
+        return created;
+    }
+
+    private Category findCategory(String id) {
+        return repository.findById(id).orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND + id));
     }
 
     private String findPathUnder(String parentId, String slug) {
-        if (parentId == null) {
-            return slug;
+        Deque<String> slugs = new ArrayDeque<>();
+        slugs.addFirst(slug);
+        String ancestorId = parentId;
+        while (ancestorId != null) {
+            Category ancestor = findCategory(ancestorId);
+            slugs.addFirst(ancestor.getSlug());
+            ancestorId = ancestor.getParentId();
         }
-        return findParent(parentId).getPath() + SEPARATOR + slug;
-    }
-
-    private Category findParent(String parentId) {
-        return repository.findById(parentId).orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND + parentId));
+        return String.join(SEPARATOR, slugs);
     }
 }
 ```
+
+`findPathUnder` walks upward and pushes each slug onto the front of an `ArrayDeque`, so the deque is in root-to-leaf
+order when the walk reaches a null `parent_id` and `String.join` needs no reversal. It runs **before** the save, so an
+unknown parent is a 404 and nothing is written — that is what the fourth test's
+`verify(repository, never()).save(any())` holds in place.
+
+The path is put on the model returned by `save` rather than on the model passed to it. `Category.path` has no column
+behind it, so setting it before the save would only travel as far as the mapper's
+`@Mapping(target = "path", ignore = true)`; setting it after is what reaches the response. Task 7 extends this method
+with a `movingId` parameter and turns the walk into the cycle check as well.
 
 Private methods come last, per the ordering rule. `@Transactional` is
 `org.springframework.transaction.annotation.Transactional` and lives here and nowhere else.
@@ -1462,7 +1651,7 @@ Expected: `Tests run: 5, Failures: 0, Errors: 0, Skipped: 0`.
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 17` in `catalog-service`.
+Expected: `BUILD SUCCESS`, `Tests run: 19` in `catalog-service`.
 
 - [ ] **Step 7: Commit**
 
@@ -1471,7 +1660,7 @@ git add catalog-service/src/main/java/com/thedarkhorse/catalog/exception/Categor
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryService.java \
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java \
         catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java
-git commit -m "feat(catalog): derive category path from the parent on create
+git commit -m "feat(catalog): derive category path from the parent chain on create
 
 Refs #15"
 ```
@@ -1480,7 +1669,7 @@ Refs #15"
 
 ## Task 5: Fetching a subtree returns the node and every descendant
 
-Covers acceptance criterion 5, and is where finding 8 is paid for.
+Covers acceptance criterion 5, and is where the recursive query and finding 8 are paid for.
 
 **Files:**
 
@@ -1491,79 +1680,96 @@ Covers acceptance criterion 5, and is where finding 8 is paid for.
 **Interfaces:**
 
 - Consumes: everything Task 4 produced.
-- Produces: `List<Category> findSubtree(String path)` on `CategoryService`, returning the node first and its descendants
-  after it in `path` order, and throwing `CategoryNotFoundException` when no row holds that exact path. Task 8 consumes
-  it.
+- Produces: `List<Category> findSubtree(String path)` on `CategoryService`, returning the node first and its
+  descendants after it in `depth, sort_order, slug` order with every `path` filled in, and throwing
+  `CategoryNotFoundException` when any segment of the path resolves to no row. Task 8 consumes it.
+
+Reading a subtree is two steps, and the split is the whole design. Resolving `keyboards/accessories` to a node is a
+walk **down** — `findByParentIdAndSlug(null, "keyboards")`, then `findByParentIdAndSlug(root.id, "accessories")` — one
+query per segment, each one hitting the unique index. Reading the subtree under that node is one recursive query. Then
+the paths are rebuilt on the way back out, in a single pass over a list the database already ordered by depth.
 
 - [ ] **Step 1: Write the failing test**
 
 Add to `CategoryServiceImplTest`. Add these constants beside the existing ones:
 
 ```java
-    private static final String GRANDCHILD_PATH = "keyboards/accessories/cables";
-    private static final String SIBLING_PATH = "keyboards-2";
-    private static final String DESCENDANT_PREFIX = "keyboards/";
+    private static final String GRANDCHILD_ID = "01920000-0000-7000-8000-000000000003";
     private static final String MISSING_PATH = "mice";
+```
+
+this fixture, beside `root()` and `child()`:
+
+```java
+    private Category grandchild() {
+        return new Category(GRANDCHILD_ID, CHILD_ID, GRANDCHILD_SLUG, null, 0, true);
+    }
 ```
 
 and these tests:
 
 ```java
     @Test
-    void givenANodeWithDescendants_whenFindSubtree_thenTheNodeComesFirstAndEveryDescendantFollows() {
-        when(repository.findByPath(PARENT_PATH)).thenReturn(Optional.of(parent()));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX))
-                .thenReturn(List.of(at(CHILD_PATH), at(GRANDCHILD_PATH)));
+    void givenANodeWithDescendants_whenFindSubtree_thenEveryPathIsRebuiltFromTheParentChain() {
+        when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
+        when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(root(), child(), grandchild()));
 
-        List<Category> subtree = service.findSubtree(PARENT_PATH);
+        List<Category> subtree = service.findSubtree(ROOT_PATH);
 
         assertThat(subtree).extracting(Category::getPath)
-                .containsExactly(PARENT_PATH, CHILD_PATH, GRANDCHILD_PATH);
+                .containsExactly(ROOT_PATH, CHILD_PATH, GRANDCHILD_PATH);
+    }
+
+    @Test
+    void givenANestedPath_whenFindSubtree_thenEachSegmentResolvesAgainstItsParent() {
+        when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
+        when(repository.findByParentIdAndSlug(ROOT_ID, CHILD_SLUG)).thenReturn(Optional.of(child()));
+        when(repository.findSubtree(CHILD_ID)).thenReturn(List.of(child(), grandchild()));
+
+        List<Category> subtree = service.findSubtree(CHILD_PATH);
+
+        assertThat(subtree).extracting(Category::getPath).containsExactly(CHILD_PATH, GRANDCHILD_PATH);
+        verify(repository).findSubtree(CHILD_ID);
     }
 
     @Test
     void givenALeaf_whenFindSubtree_thenOnlyTheNodeIsReturned() {
-        when(repository.findByPath(GRANDCHILD_PATH)).thenReturn(Optional.of(at(GRANDCHILD_PATH)));
-        when(repository.findByPathStartingWith(GRANDCHILD_PATH + "/")).thenReturn(List.of());
+        when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
+        when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(root()));
 
-        assertThat(service.findSubtree(GRANDCHILD_PATH)).extracting(Category::getPath)
-                .containsExactly(GRANDCHILD_PATH);
+        assertThat(service.findSubtree(ROOT_PATH)).extracting(Category::getPath).containsExactly(ROOT_PATH);
     }
 
     @Test
-    void givenASiblingSharingThePrefix_whenFindSubtree_thenTheSiblingIsNotADescendant() {
-        when(repository.findByPath(PARENT_PATH)).thenReturn(Optional.of(parent()));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
-
-        List<Category> subtree = service.findSubtree(PARENT_PATH);
-
-        assertThat(subtree).extracting(Category::getPath).doesNotContain(SIBLING_PATH);
-        verify(repository).findByPathStartingWith(DESCENDANT_PREFIX);
-        verify(repository, never()).findByPathStartingWith(PARENT_PATH);
-    }
-
-    @Test
-    void givenAnUnknownPath_whenFindSubtree_thenCategoryNotFound() {
-        when(repository.findByPath(MISSING_PATH)).thenReturn(Optional.empty());
+    void givenAnUnknownRootSlug_whenFindSubtree_thenCategoryNotFound() {
+        when(repository.findByParentIdAndSlug(null, MISSING_PATH)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.findSubtree(MISSING_PATH))
                 .isInstanceOf(CategoryNotFoundException.class);
+        verify(repository, never()).findSubtree(any());
+    }
+
+    @Test
+    void givenAnUnknownSegmentUnderAKnownRoot_whenFindSubtree_thenCategoryNotFound() {
+        when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
+        when(repository.findByParentIdAndSlug(ROOT_ID, CHILD_SLUG)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.findSubtree(CHILD_PATH))
+                .isInstanceOf(CategoryNotFoundException.class);
+        verify(repository, never()).findSubtree(any());
     }
 ```
 
-and this helper, beside `parent()` and after every `@Test` method:
+Add the import `java.util.List`.
 
-```java
-    private Category at(String path) {
-        return new Category(CHILD_ID, PARENT_ID, CHILD_SLUG, path, 0, true);
-    }
-```
+The first test is the one that would have been finding 8 under the old design and is now simply arithmetic: the
+fixtures carry no `path` at all, so `keyboards/accessories/cables` can only come from following `parent_id` through
+the list. A prefix-sharing sibling like `keyboards-2` needs no test here, because it is not reachable from
+`findSubtree(ROOT_ID)` — the recursion joins on `parent_id` and there is no prefix to match. Finding 8 measured that
+against the real table, which is the right place for it now.
 
-Add the imports `java.util.List` and `static org.mockito.Mockito.never`.
-
-The third test is finding 8 written as an assertion. `verify(repository, never()).findByPathStartingWith(PARENT_PATH)`
-is the part that catches the bug, because a `findByPathStartingWith("keyboards")` implementation still passes the first
-two tests against a mock that was never told about `keyboards-2`.
+The two `never()` assertions on the not-found tests are the other half: an unresolvable path must not reach the
+recursive query at all.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1587,42 +1793,83 @@ and the ordering rule only governs private methods:
 
 with the import `java.util.List`.
 
-In `CategoryServiceImpl`, add the public method after `createCategory` and before the private block:
+In `CategoryServiceImpl`, add the public method **above** `createCategory` — the interface lists `findSubtree` first
+and the class follows it — and two private methods at the end of the private block:
 
 ```java
     @Override
     @Transactional(readOnly = true)
     public List<Category> findSubtree(String path) {
-        Category node = repository.findByPath(path)
-                .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
-        List<Category> subtree = new ArrayList<>();
-        subtree.add(node);
-        subtree.addAll(repository.findByPathStartingWith(path + SEPARATOR));
+        Category node = findCategoryAt(path);
+        return withPaths(repository.findSubtree(node.getId()), path);
+    }
+```
+
+```java
+    private Category findCategoryAt(String path) {
+        Category node = null;
+        String parentId = null;
+        for (String slug : SEPARATOR_PATTERN.split(path, -1)) {
+            node = repository.findByParentIdAndSlug(parentId, slug)
+                    .orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND_PATH + path));
+            parentId = node.getId();
+        }
+        if (node == null) {
+            throw new CategoryNotFoundException(NOT_FOUND_PATH + path);
+        }
+        return node;
+    }
+
+    private List<Category> withPaths(List<Category> subtree, String rootPath) {
+        Map<String, String> paths = new HashMap<>();
+        subtree.forEach(category -> {
+            String parentPath = paths.get(category.getParentId());
+            String path = parentPath == null ? rootPath : parentPath + SEPARATOR + category.getSlug();
+            paths.put(category.getId(), path);
+            category.setPath(path);
+        });
         return subtree;
     }
 ```
 
-Add the constant beside the others:
+Add the constants beside the others:
 
 ```java
+    private static final Pattern SEPARATOR_PATTERN = Pattern.compile(SEPARATOR);
     private static final String NOT_FOUND_PATH = "No category at path ";
 ```
 
-and the imports `java.util.ArrayList` and `java.util.List`.
+and the imports `java.util.HashMap`, `java.util.List`, `java.util.Map` and `java.util.regex.Pattern`.
 
-`path + SEPARATOR` and never `path` — finding 8.
+Four things here are deliberate.
+
+`SEPARATOR_PATTERN` is a compiled `Pattern`, not `path.split(SEPARATOR)`. Error Prone's `StringSplitter` check fails
+the build on `String.split` because it drops trailing empty strings and treats its argument as a regex; a hoisted
+`Pattern` with an explicit limit says what is meant and compiles the pattern once.
+
+The limit is `-1`, which keeps empty segments. `"keyboards//accessories"` and `"keyboards/"` then produce an empty
+slug that matches no row and 404s, instead of silently collapsing to a path that resolves.
+
+`node == null` after the loop is not dead code. `split` on an empty string returns one empty element, but the capture-all
+mapping in Task 8 can hand this method an empty path from `GET /api/v1/categories`, and finding 11 requires that to be
+a 404 rather than a whole-forest listing. The explicit throw is what guarantees the method never returns null.
+
+`withPaths` walks the list once and keeps a map from id to path. It works only because the query ordered by `depth`
+first, so a node's parent has already been seen and its path is already in the map. The root is the one node whose
+parent is absent from the map, and it takes `rootPath` — the path the caller asked for — which is also how a subtree
+read rooted at `keyboards/accessories` returns absolute paths rather than paths relative to the node.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `mvn -B -pl catalog-service test -Dtest=CategoryServiceImplTest`
 
-Expected: `Tests run: 9, Failures: 0, Errors: 0, Skipped: 0`.
+Expected: `Tests run: 10, Failures: 0, Errors: 0, Skipped: 0`.
 
 - [ ] **Step 5: Run the gate**
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 21` in `catalog-service`.
+Expected: `BUILD SUCCESS`, `Tests run: 24` in `catalog-service`.
 
 - [ ] **Step 6: Commit**
 
@@ -1630,7 +1877,7 @@ Expected: `BUILD SUCCESS`, `Tests run: 21` in `catalog-service`.
 git add catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryService.java \
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java \
         catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java
-git commit -m "feat(catalog): read a category subtree by materialised path
+git commit -m "feat(catalog): read a category subtree with a recursive query
 
 Refs #15"
 ```
@@ -1652,7 +1899,8 @@ given that the spec forbids a database in tests.
 - Modify: `catalog-service/src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java` — two new
   handlers
 - Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java` — three tests
-- Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java` — two tests
+- Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java` — two
+  tests
 
 **Interfaces:**
 
@@ -1671,23 +1919,23 @@ Add to `CategoryServiceImplTest`:
 
 ```java
     @Test
-    void givenACategoryWithDescendants_whenDeleteCategory_thenCategoryHasChildren() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
+    void givenACategoryWithChildren_whenDeleteCategory_thenCategoryHasChildren() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.existsByParentId(ROOT_ID)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.deleteCategory(PARENT_ID))
+        assertThatThrownBy(() -> service.deleteCategory(ROOT_ID))
                 .isInstanceOf(CategoryHasChildrenException.class);
-        verify(repository, never()).deleteById(PARENT_ID);
+        verify(repository, never()).deleteById(ROOT_ID);
     }
 
     @Test
     void givenALeaf_whenDeleteCategory_thenItIsDeleted() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of());
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.existsByParentId(ROOT_ID)).thenReturn(false);
 
-        service.deleteCategory(PARENT_ID);
+        service.deleteCategory(ROOT_ID);
 
-        verify(repository).deleteById(PARENT_ID);
+        verify(repository).deleteById(ROOT_ID);
     }
 
     @Test
@@ -1698,6 +1946,10 @@ Add to `CategoryServiceImplTest`:
                 .isInstanceOf(CategoryNotFoundException.class);
     }
 ```
+
+The criterion says "has children", and `existsByParentId` answers exactly that question in one indexed row-existence
+check. Asking whether the node has *descendants* would mean running the recursive query and discarding everything but
+its size, and it would give the same answer: a node with a descendant has a child.
 
 with the import `com.thedarkhorse.catalog.exception.CategoryHasChildrenException`.
 
@@ -1734,55 +1986,47 @@ Add to `CategoryService`:
     void deleteCategory(String id);
 ```
 
-Add to `CategoryServiceImpl`, after `findSubtree` and before the private block:
+Add to `CategoryServiceImpl`, after `createCategory` and before the private block:
 
 ```java
     @Override
     @Transactional
     public void deleteCategory(String id) {
         Category category = findCategory(id);
-        if (!repository.findByPathStartingWith(category.getPath() + SEPARATOR).isEmpty()) {
-            throw new CategoryHasChildrenException(HAS_CHILDREN + category.getPath());
+        if (repository.existsByParentId(category.getId())) {
+            throw new CategoryHasChildrenException(HAS_CHILDREN + category.getId());
         }
-        repository.deleteById(id);
+        repository.deleteById(category.getId());
     }
 ```
 
 Add the constant:
 
 ```java
-    private static final String HAS_CHILDREN = "Category has descendants at path ";
+    private static final String HAS_CHILDREN = "Category has children with id ";
 ```
 
-and rename the existing private `findParent` to `findCategory`, since it is now used for both the parent lookup and the
-delete lookup:
-
-```java
-    private Category findCategory(String id) {
-        return repository.findById(id).orElseThrow(() -> new CategoryNotFoundException(NOT_FOUND + id));
-    }
-```
-
-updating the one call inside `findPathUnder`.
+The message carries the id rather than the path, because the id is what the caller sent and the path would cost
+another walk to produce for a string that never leaves the log — Cycle B keeps both out of the response body anyway.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `mvn -B -pl catalog-service test -Dtest=CategoryServiceImplTest`
 
-Expected: `Tests run: 12, Failures: 0, Errors: 0, Skipped: 0`.
+Expected: `Tests run: 13, Failures: 0, Errors: 0, Skipped: 0`.
 
 - [ ] **Step 5: Run the gate and commit**
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 24` in `catalog-service`.
+Expected: `BUILD SUCCESS`, `Tests run: 27` in `catalog-service`.
 
 ```bash
 git add catalog-service/src/main/java/com/thedarkhorse/catalog/exception/CategoryHasChildrenException.java \
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryService.java \
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java \
         catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java
-git commit -m "feat(catalog): refuse to delete a category with descendants
+git commit -m "feat(catalog): refuse to delete a category with children
 
 Refs #15"
 ```
@@ -1798,6 +2042,9 @@ Add to `CatalogExceptionHandlerTest`, beside the existing constants:
     private static final String MISSING_MESSAGE = "No category at path mice";
     private static final String HAS_CHILDREN_MESSAGE = "Category has descendants at path keyboards";
 ```
+
+The two message constants are fixtures for the handler, not assertions about the service's wording — the point of both
+tests is that neither string reaches the response.
 
 and these tests:
 
@@ -1852,17 +2099,28 @@ and the two methods after `handleDataIntegrityViolation` and before `handleUnexp
 ```java
     @ExceptionHandler(CategoryNotFoundException.class)
     public ProblemDetail handleCategoryNotFound(CategoryNotFoundException exception) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, NOT_FOUND_DETAIL);
+        logger.warn(NOT_FOUND_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(NOT_FOUND, NOT_FOUND_DETAIL);
     }
 
     @ExceptionHandler(CategoryHasChildrenException.class)
     public ProblemDetail handleCategoryHasChildren(CategoryHasChildrenException exception) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, CONFLICT_DETAIL);
+        logger.warn(HAS_CHILDREN_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(CONFLICT, CONFLICT_DETAIL);
     }
 ```
 
-with the two imports. Neither logs: `handleDataIntegrityViolation` logs because a constraint firing is a surprise, and
-these two are the API stating a rule, which is not.
+with the two imports and two more constants beside the details:
+
+```java
+    private static final String NOT_FOUND_LOG = "Request targeted a category that does not exist";
+    private static final String HAS_CHILDREN_LOG = "Request rejected because the category has descendants";
+```
+
+Both log, for the same reason `handleDataIntegrityViolation` does: the response body deliberately says nothing about
+which category or which rule, so the log is the only place the id survives, and a 404 that cannot be traced to a
+lookup is not operable. `logger` is inherited from `ResponseEntityExceptionHandler`. `NOT_FOUND` and `CONFLICT` are
+unqualified because #14 already static-imports `org.springframework.http.HttpStatus.*` on this class.
 
 `@ExceptionHandler(Exception.class)` is already on this class and does not swallow these. Spring's
 `ExceptionHandlerMethodResolver` picks the closest match in the exception's own hierarchy, so a
@@ -1878,7 +2136,7 @@ Expected: `Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`.
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 26` in `catalog-service`.
+Expected: `BUILD SUCCESS`, `Tests run: 29` in `catalog-service`.
 
 ```bash
 git add catalog-service/src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java \
@@ -1890,125 +2148,131 @@ Refs #15"
 
 ---
 
-## Task 7: Moving a category recomputes its path and every descendant's
+## Task 7: Moving a category writes one row, and a cycle is refused
 
-Covers acceptance criterion 6. The same method also covers a rename, because in both cases the derived path changes and
-the cascade is identical.
+Covers acceptance criterion 6. The same method also covers a rename, because in both cases the derived path changes.
+Under a stored `path` both would have rewritten every descendant; here neither does, because a descendant's `parent_id`
+is unchanged by its ancestor moving and nothing else about its position is stored. **The assertion that no descendant
+is written is the point of this task**, and it is what the design buys.
+
+Cycle B is finding B: the ancestor walk that builds the path is also the only thing standing between a move and an
+unreachable subtree, so the cycle check goes in where the walk already is.
 
 **Files:**
 
+- Create: `catalog-service/src/main/java/com/thedarkhorse/catalog/exception/CategoryCycleException.java`
 - Modify: `catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryService.java` — add `updateCategory`
-- Modify: `catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java` — implement it
-- Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java` — five tests
+- Modify: `catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java` — implement it and
+  add the cycle guard
+- Modify: `catalog-service/src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java` — one more
+  handler
+- Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java` — eight tests
+- Test: `catalog-service/src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java` — one test
 
 **Interfaces:**
 
 - Consumes: everything Tasks 4 to 6 produced.
 - Produces: `Category updateCategory(String id, Category category)` on `CategoryService`, returning the saved node with
-  its recomputed path. Task 8 consumes it.
+  its recomputed path; `com.thedarkhorse.catalog.exception.CategoryCycleException` with a single
+  `CategoryCycleException(String message)` constructor; and
+  `ProblemDetail handleCategoryCycle(CategoryCycleException)` returning 409 on `CatalogExceptionHandler`. Task 8
+  consumes `updateCategory`.
+
+### Cycle A — the move writes one row
 
 - [ ] **Step 1: Write the failing test**
 
 Add to `CategoryServiceImplTest`, beside the existing constants:
 
 ```java
-    private static final String NEW_PARENT_ID = "01920000-0000-7000-8000-000000000003";
-    private static final String NEW_PARENT_PATH = "peripherals";
-    private static final String MOVED_PATH = "peripherals/keyboards";
-    private static final String MOVED_CHILD_PATH = "peripherals/keyboards/accessories";
-    private static final String MOVED_GRANDCHILD_PATH = "peripherals/keyboards/accessories/cables";
+    private static final String NEW_PARENT_ID = "01920000-0000-7000-8000-000000000004";
+    private static final String NEW_PARENT_SLUG = "peripherals";
     private static final String RENAMED_SLUG = "boards";
-    private static final String RENAMED_PATH = "boards";
-    private static final String RENAMED_CHILD_PATH = "boards/accessories";
+    private static final String MOVED_PATH = "peripherals/keyboards";
+```
+
+this fixture, beside the others:
+
+```java
+    private Category newParent() {
+        return new Category(NEW_PARENT_ID, null, NEW_PARENT_SLUG, null, 0, true);
+    }
 ```
 
 and these tests:
 
 ```java
     @Test
-    void givenANewParent_whenUpdateCategory_thenTheMovedNodePathIsRecomputed() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findById(NEW_PARENT_ID))
-                .thenReturn(Optional.of(new Category(NEW_PARENT_ID, null, NEW_PARENT_PATH, NEW_PARENT_PATH, 0, true)));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of());
+    void givenANewParent_whenUpdateCategory_thenOnlyTheMovedRowIsWritten() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.findById(NEW_PARENT_ID)).thenReturn(Optional.of(newParent()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         Category moved = service.updateCategory(
-                PARENT_ID, new Category(null, NEW_PARENT_ID, PARENT_SLUG, null, 0, true));
+                ROOT_ID, new Category(null, NEW_PARENT_ID, ROOT_SLUG, null, 0, true));
 
-        assertThat(moved.getPath()).isEqualTo(MOVED_PATH);
-        assertThat(moved.getId()).isEqualTo(PARENT_ID);
+        assertThat(moved.getId()).isEqualTo(ROOT_ID);
         assertThat(moved.getParentId()).isEqualTo(NEW_PARENT_ID);
+        assertThat(moved.getPath()).isEqualTo(MOVED_PATH);
+        verify(repository, times(1)).save(any());
     }
 
     @Test
-    void givenANewParent_whenUpdateCategory_thenEveryDescendantPathIsRecomputed() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findById(NEW_PARENT_ID))
-                .thenReturn(Optional.of(new Category(NEW_PARENT_ID, null, NEW_PARENT_PATH, NEW_PARENT_PATH, 0, true)));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX))
-                .thenReturn(List.of(at(CHILD_PATH), at(GRANDCHILD_PATH)));
-        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.updateCategory(PARENT_ID, new Category(null, NEW_PARENT_ID, PARENT_SLUG, null, 0, true));
-
-        ArgumentCaptor<List<Category>> captor = ArgumentCaptor.captor();
-        verify(repository).saveAll(captor.capture());
-        assertThat(captor.getValue()).extracting(Category::getPath)
-                .containsExactly(MOVED_CHILD_PATH, MOVED_GRANDCHILD_PATH);
-    }
-
-    @Test
-    void givenASiblingSharingThePrefix_whenUpdateCategory_thenOnlyRealDescendantsAreRead() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findById(NEW_PARENT_ID))
-                .thenReturn(Optional.of(new Category(NEW_PARENT_ID, null, NEW_PARENT_PATH, NEW_PARENT_PATH, 0, true)));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
-        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.updateCategory(PARENT_ID, new Category(null, NEW_PARENT_ID, PARENT_SLUG, null, 0, true));
-
-        verify(repository).findByPathStartingWith(DESCENDANT_PREFIX);
-        verify(repository, never()).findByPathStartingWith(PARENT_PATH);
-    }
-
-    @Test
-    void givenANewSlug_whenUpdateCategory_thenTheNodeAndItsDescendantsAreRenamed() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
-        when(repository.findByPathStartingWith(DESCENDANT_PREFIX)).thenReturn(List.of(at(CHILD_PATH)));
+    void givenANewSlug_whenUpdateCategory_thenOnlyTheRenamedRowIsWritten() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         Category renamed = service.updateCategory(
-                PARENT_ID, new Category(null, null, RENAMED_SLUG, null, 0, true));
+                ROOT_ID, new Category(null, null, RENAMED_SLUG, null, 0, true));
 
-        assertThat(renamed.getPath()).isEqualTo(RENAMED_PATH);
-        ArgumentCaptor<List<Category>> captor = ArgumentCaptor.captor();
-        verify(repository).saveAll(captor.capture());
-        assertThat(captor.getValue()).extracting(Category::getPath).containsExactly(RENAMED_CHILD_PATH);
+        assertThat(renamed.getPath()).isEqualTo(RENAMED_SLUG);
+        assertThat(renamed.getSlug()).isEqualTo(RENAMED_SLUG);
+        verify(repository, times(1)).save(any());
+        verify(repository, never()).findSubtree(any());
     }
 
     @Test
-    void givenAnUnchangedPath_whenUpdateCategory_thenNoDescendantIsSaved() {
-        when(repository.findById(PARENT_ID)).thenReturn(Optional.of(parent()));
+    void givenNoSortOrderAndNoActive_whenUpdateCategory_thenTheDdlDefaultsAreApplied() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.updateCategory(PARENT_ID, new Category(null, null, PARENT_SLUG, null, 0, true));
+        Category updated = service.updateCategory(
+                ROOT_ID, new Category(null, null, ROOT_SLUG, null, null, null));
 
-        verify(repository, never()).saveAll(any());
+        assertThat(updated.getSortOrder()).isZero();
+        assertThat(updated.getActive()).isTrue();
     }
 
     @Test
     void givenAnUnknownId_whenUpdateCategory_thenCategoryNotFound() {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateCategory(
-                        MISSING_ID, new Category(null, null, PARENT_SLUG, null, 0, true)))
-                .isInstanceOf(CategoryNotFoundException.class);
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                MISSING_ID, new Category(null, null, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
+    }
+
+    @Test
+    void givenAnUnknownNewParent_whenUpdateCategory_thenCategoryNotFound() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID, new Category(null, MISSING_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
+        verify(repository, never()).save(any());
     }
 ```
 
-`ArgumentCaptor.captor()` is the generic-friendly factory added in Mockito 5.7; `forClass(List.class)` would need an
-unchecked cast, and Error Prone will not be pleased with one.
+Add the import `static org.mockito.Mockito.times`.
+
+`verify(repository, times(1)).save(any())` is the assertion this whole redesign exists for, and it is deliberately
+`times(1)` rather than a bare `verify` so that it reads as a bound and not just a presence check. `keyboards` in the
+first test has a child and a grandchild in the fixtures; under the old design this call wrote three rows. The second
+test adds `verify(repository, never()).findSubtree(any())`: a rename must not even *read* the subtree, because there is
+nothing in it to update.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -2023,49 +2287,34 @@ cannot find symbol
 
 - [ ] **Step 3: Implement it**
 
-Add to `CategoryService`:
+Add to `CategoryService`, after `createCategory`:
 
 ```java
     Category updateCategory(String id, Category category);
 ```
 
-Add to `CategoryServiceImpl`, after `findSubtree` and before `deleteCategory`:
+Add to `CategoryServiceImpl`, after `createCategory` and before `deleteCategory`:
 
 ```java
     @Override
     @Transactional
     public Category updateCategory(String id, Category category) {
         Category existing = findCategory(id);
-        String oldPath = existing.getPath();
-        String newPath = findPathUnder(category.getParentId(), category.getSlug());
-        if (!newPath.equals(oldPath)) {
-            moveDescendants(oldPath, newPath);
-        }
+        String path = findPathUnder(category.getParentId(), category.getSlug());
         existing.setParentId(category.getParentId());
         existing.setSlug(category.getSlug());
-        existing.setPath(newPath);
         existing.setSortOrder(category.getSortOrder() == null ? DEFAULT_SORT_ORDER : category.getSortOrder());
         existing.setActive(category.getActive() == null || category.getActive());
-        return repository.save(existing);
+        Category updated = repository.save(existing);
+        updated.setPath(path);
+        return updated;
     }
 ```
 
-and the private method, in the private block:
-
-```java
-    private void moveDescendants(String oldPath, String newPath) {
-        List<Category> descendants = repository.findByPathStartingWith(oldPath + SEPARATOR);
-        if (descendants.isEmpty()) {
-            return;
-        }
-        descendants.forEach(descendant ->
-                descendant.setPath(newPath + descendant.getPath().substring(oldPath.length())));
-        repository.saveAll(descendants);
-    }
-```
-
-`oldPath + SEPARATOR` and never `oldPath` — finding 8, again. `substring(oldPath.length())` keeps the leading `/` of the
-remainder, so `newPath + "/accessories"` is what gets written; that is why `newPath` carries no trailing separator.
+No new private method and no new query. The whole of "recompute the path for every descendant" is the absence of code
+here: descendants are found through `parent_id`, which the move does not touch, and their paths are built on the next
+read. `findPathUnder` runs before any setter, so an unknown new parent leaves `existing` untouched and nothing is
+saved.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -2073,19 +2322,202 @@ Run: `mvn -B -pl catalog-service test -Dtest=CategoryServiceImplTest`
 
 Expected: `Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`.
 
-- [ ] **Step 5: Run the gate**
+- [ ] **Step 5: Run the gate and commit**
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 32` in `catalog-service`.
-
-- [ ] **Step 6: Commit**
+Expected: `BUILD SUCCESS`, `Tests run: 34` in `catalog-service`.
 
 ```bash
 git add catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryService.java \
         catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java \
         catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java
-git commit -m "feat(catalog): recompute descendant paths when a category moves
+git commit -m "feat(catalog): move a category by writing only its own row
+
+Refs #15"
+```
+
+### Cycle B — a move under a descendant is refused
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `CategoryServiceImplTest`:
+
+```java
+    @Test
+    void givenItselfAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID, new Category(null, ROOT_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void givenAChildAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void givenADeepDescendantAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
+        when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
+        when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
+        when(repository.findById(GRANDCHILD_ID)).thenReturn(Optional.of(grandchild()));
+
+        ThrowingCallable throwingCallable = () -> service.updateCategory(
+                ROOT_ID, new Category(null, GRANDCHILD_ID, ROOT_SLUG, null, 0, true));
+
+        assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
+        verify(repository, never()).save(any());
+    }
+```
+
+with the import `com.thedarkhorse.catalog.exception.CategoryCycleException`.
+
+Three tests for three distances, because the guard is inside a loop and a one-level check would pass the first two.
+The third is the one that fails for an implementation that only compares the new parent's `parent_id` against the
+moving id.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `mvn -B -pl catalog-service test -Dtest=CategoryServiceImplTest`
+
+Expected: `BUILD FAILURE` at `testCompile` with
+
+```
+cannot find symbol
+  symbol:   class CategoryCycleException
+  location: package com.thedarkhorse.catalog.exception
+```
+
+Then, once the exception exists, the deeper failure is the one worth seeing: without the guard,
+`givenItselfAsTheNewParent` does not fail with an assertion error — it does not terminate, because `findPathUnder`
+follows `parent_id` from `keyboards` to `keyboards` forever. Run it with the exception created and the guard absent,
+confirm the test hangs, and stop it. That hang is the red step, and it is why this check is not optional scope.
+
+- [ ] **Step 3: Write the exception and the guard**
+
+Create `catalog-service/src/main/java/com/thedarkhorse/catalog/exception/CategoryCycleException.java`:
+
+```java
+package com.thedarkhorse.catalog.exception;
+
+public class CategoryCycleException extends RuntimeException {
+
+    public CategoryCycleException(String message) {
+        super(message);
+    }
+}
+```
+
+Give `findPathUnder` a `movingId` parameter and check it inside the walk:
+
+```java
+    private String findPathUnder(String movingId, String parentId, String slug) {
+        Deque<String> slugs = new ArrayDeque<>();
+        slugs.addFirst(slug);
+        String ancestorId = parentId;
+        while (ancestorId != null) {
+            if (ancestorId.equals(movingId)) {
+                throw new CategoryCycleException(CYCLE + movingId);
+            }
+            Category ancestor = findCategory(ancestorId);
+            slugs.addFirst(ancestor.getSlug());
+            ancestorId = ancestor.getParentId();
+        }
+        return String.join(SEPARATOR, slugs);
+    }
+```
+
+with the constant:
+
+```java
+    private static final String CYCLE = "Category cannot move under its own descendant with id ";
+```
+
+`createCategory` passes `null` and `updateCategory` passes `id`:
+
+```java
+        String path = findPathUnder(null, category.getParentId(), category.getSlug());
+```
+
+```java
+        String path = findPathUnder(id, category.getParentId(), category.getSlug());
+```
+
+A create can never be a cycle — the row does not exist yet — so `null` is the honest argument rather than a sentinel,
+and `ancestorId.equals(null)` is false for every ancestor, which is exactly the wanted behaviour with no extra branch.
+The check sits before `findCategory` in the loop body so that moving a node under itself is caught without a read.
+
+There is no separate descendant query. Walking up from the proposed parent visits exactly the ancestors, and the
+moving node appearing among them is the definition of the cycle — the same walk the path needs, so the guard is one
+comparison per level and no extra round trip.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `mvn -B -pl catalog-service test -Dtest=CategoryServiceImplTest`
+
+Expected: `Tests run: 21, Failures: 0, Errors: 0, Skipped: 0`.
+
+- [ ] **Step 5: Map it to 409**
+
+Add to `CatalogExceptionHandlerTest`, beside the other message constants:
+
+```java
+    private static final String CYCLE_MESSAGE = "Category cannot move under its own descendant at path keyboards";
+```
+
+and the test:
+
+```java
+    @Test
+    void givenACycle_whenHandleCategoryCycle_thenConflict() {
+        ProblemDetail body = handler.handleCategoryCycle(new CategoryCycleException(CYCLE_MESSAGE));
+
+        assertThat(body.getStatus()).isEqualTo(409);
+        assertThat(body.getDetail()).isEqualTo(CONFLICT_DETAIL);
+        assertThat(body.getDetail()).doesNotContain(CYCLE_MESSAGE);
+    }
+```
+
+Run it, see it fail to compile, then add to `CatalogExceptionHandler` after `handleCategoryHasChildren`:
+
+```java
+    @ExceptionHandler(CategoryCycleException.class)
+    public ProblemDetail handleCategoryCycle(CategoryCycleException exception) {
+        logger.warn(CYCLE_LOG, exception);
+        return ProblemDetail.forStatusAndDetail(CONFLICT, CONFLICT_DETAIL);
+    }
+```
+
+with the constant `private static final String CYCLE_LOG = "Request rejected because the move would create a cycle";`
+and the import.
+
+409 and not 400: the request is well formed and the body would be valid against a different tree. What makes it wrong
+is the current state of the resource, which is what 409 means.
+
+- [ ] **Step 6: Run the gate and commit**
+
+Run: `mvn -B clean verify`
+
+Expected: `BUILD SUCCESS`, `Tests run: 38` in `catalog-service`.
+
+```bash
+git add catalog-service/src/main/java/com/thedarkhorse/catalog/exception/CategoryCycleException.java \
+        catalog-service/src/main/java/com/thedarkhorse/catalog/service/CategoryServiceImpl.java \
+        catalog-service/src/main/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandler.java \
+        catalog-service/src/test/java/com/thedarkhorse/catalog/service/CategoryServiceImplTest.java \
+        catalog-service/src/test/java/com/thedarkhorse/catalog/controller/CatalogExceptionHandlerTest.java
+git commit -m "feat(catalog): refuse to move a category under its own descendant
 
 Refs #15"
 ```
@@ -2124,20 +2556,21 @@ Create `catalog-service/src/test/java/com/thedarkhorse/catalog/controller/Catego
 ```java
 package com.thedarkhorse.catalog.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
 import com.thedarkhorse.catalog.model.Category;
 import com.thedarkhorse.catalog.service.CategoryService;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 
 class CategoryControllerTest {
 
@@ -2157,9 +2590,9 @@ class CategoryControllerTest {
     void givenACapturedPathWithALeadingSlash_whenFindSubtree_thenTheServiceIsCalledWithoutIt() {
         when(service.findSubtree(PATH)).thenReturn(List.of(model()));
 
-        List<CategoryResponse> responses = controller.findSubtree(CAPTURED_PATH);
+        ResponseEntity<List<CategoryResponse>> response = controller.findSubtree(CAPTURED_PATH);
 
-        assertThat(responses).extracting(CategoryResponse::path).containsExactly(PATH);
+        assertThat(response.getBody()).extracting(CategoryResponse::path).containsExactly(PATH);
         verify(service).findSubtree(PATH);
     }
 
@@ -2176,11 +2609,14 @@ class CategoryControllerTest {
     void givenARequest_whenCreateCategory_thenTheResponseCarriesTheStoredPath() {
         when(service.createCategory(any())).thenReturn(model());
 
-        CategoryResponse response =
+        ResponseEntity<CategoryResponse> response =
                 controller.createCategory(new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
-        assertThat(response.id()).isEqualTo(ID);
-        assertThat(response.path()).isEqualTo(PATH);
+        CategoryResponse body = response.getBody();
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(body).isNotNull();
+        assertThat(body.id()).isEqualTo(ID);
+        assertThat(body.path()).isEqualTo(PATH);
         ArgumentCaptor<Category> captor = ArgumentCaptor.forClass(Category.class);
         verify(service).createCategory(captor.capture());
         assertThat(captor.getValue().getParentId()).isEqualTo(PARENT_ID);
@@ -2193,17 +2629,20 @@ class CategoryControllerTest {
     void givenARequest_whenUpdateCategory_thenTheServiceReceivesTheIdAndTheModel() {
         when(service.updateCategory(eq(ID), any())).thenReturn(model());
 
-        CategoryResponse response =
+        ResponseEntity<CategoryResponse> response =
                 controller.updateCategory(ID, new CategoryRequest(PARENT_ID, SLUG, SORT_ORDER, true));
 
-        assertThat(response.path()).isEqualTo(PATH);
+        CategoryResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.path()).isEqualTo(PATH);
         verify(service).updateCategory(eq(ID), any());
     }
 
     @Test
     void givenAnId_whenDeleteCategory_thenTheServiceReceivesIt() {
-        controller.deleteCategory(ID);
+        ResponseEntity<Void> response = controller.deleteCategory(ID);
 
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(service).deleteCategory(ID);
     }
 
@@ -2213,7 +2652,11 @@ class CategoryControllerTest {
 }
 ```
 
-There is no test asserting that `@Pattern` rejects Arabic. That would be testing Hibernate Validator, which the spec
+`model()` carries a `path`, because a model coming *out* of the service always has one — the service is what derives
+it. The `path` a response carries is therefore never read from a column, and the first test is the one that says so:
+the controller passes the captured path down and hands back whatever the service computed under it.
+
+There is no test asserting that `@Pattern` rejects Arabic.There is no test asserting that `@Pattern` rejects Arabic. That would be testing Hibernate Validator, which the spec
 forbids outright; acceptance criterion 3 is measured live in Task 9 instead, where what is being tested is our contract
 and not the framework's.
 
@@ -2245,7 +2688,8 @@ public record CategoryRequest(
         String parentId,
         @NotBlank @Size(max = 100) @Pattern(regexp = "[a-z0-9-]+") String slug,
         @PositiveOrZero Integer sortOrder,
-        Boolean active) {}
+        Boolean active) {
+}
 ```
 
 Exactly the three constraints the issue names, with the regex finding 12 measured. No anchors: `@Pattern` uses
@@ -2259,8 +2703,18 @@ Create `catalog-service/src/main/java/com/thedarkhorse/catalog/controller/Catego
 package com.thedarkhorse.catalog.controller;
 
 public record CategoryResponse(
-        String id, String parentId, String slug, String path, Integer sortOrder, Boolean active) {}
+        String id,
+        String parentId,
+        String slug,
+        String path,
+        Integer sortOrder,
+        Boolean active
+) {
+}
 ```
+
+`path` is on the response and on no table. It is derived per read, which is why `CategoryResponse` carries it and
+`CategoryEntity` does not.
 
 - [ ] **Step 4: Add the three boundary methods to the mapper**
 
@@ -2290,17 +2744,11 @@ package com.thedarkhorse.catalog.controller;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.service.CategoryService;
 import jakarta.validation.Valid;
-import java.util.List;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/categories")
@@ -2317,25 +2765,26 @@ public class CategoryController {
     }
 
     @GetMapping("/{*path}")
-    public List<CategoryResponse> findSubtree(@PathVariable String path) {
-        return mapper.toResponses(service.findSubtree(withoutLeadingSeparator(path)));
+    public ResponseEntity<List<CategoryResponse>> findSubtree(@PathVariable String path) {
+        return ResponseEntity.ok(mapper.toResponses(service.findSubtree(withoutLeadingSeparator(path))));
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public CategoryResponse createCategory(@Valid @RequestBody CategoryRequest request) {
-        return mapper.toResponse(service.createCategory(mapper.toModel(request)));
+    public ResponseEntity<CategoryResponse> createCategory(@Valid @RequestBody CategoryRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(mapper.toResponse(service.createCategory(mapper.toModel(request))));
     }
 
     @PutMapping("/{id}")
-    public CategoryResponse updateCategory(@PathVariable String id, @Valid @RequestBody CategoryRequest request) {
-        return mapper.toResponse(service.updateCategory(id, mapper.toModel(request)));
+    public ResponseEntity<CategoryResponse> updateCategory(@PathVariable String id,
+                                                           @Valid @RequestBody CategoryRequest request) {
+        return ResponseEntity.ok(mapper.toResponse(service.updateCategory(id, mapper.toModel(request))));
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteCategory(@PathVariable String id) {
+    public ResponseEntity<Void> deleteCategory(@PathVariable String id) {
         service.deleteCategory(id);
+        return ResponseEntity.noContent().build();
     }
 
     private String withoutLeadingSeparator(String path) {
@@ -2344,7 +2793,8 @@ public class CategoryController {
 }
 ```
 
-`{*path}` is a capture-all and its value arrives with a leading `/` — finding 11, and the first two tests in Step 1. The
+`ResponseEntity` rather than `@ResponseStatus`, so that the status is part of the method's return value and the
+controller test can assert on it without standing up MockMvc. `{*path}` is a capture-all`{*path}` is a capture-all and its value arrives with a leading `/` — finding 11, and the first two tests in Step 1. The
 private method comes last, per the ordering rule.
 
 - [ ] **Step 6: Write the configuration**
@@ -2398,8 +2848,9 @@ Expected: `Tests run: 5, Failures: 0, Errors: 0, Skipped: 0`.
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 37` in `catalog-service` — 4 from #14, 2 added in Task 6, 8 from
-`CategoryRepositoryImplTest`, 18 from `CategoryServiceImplTest`, 5 from `CategoryControllerTest`.
+Expected: `BUILD SUCCESS`, `Tests run: 43` in `catalog-service` — 7 from `CatalogExceptionHandlerTest`, being the 4
+inherited from #14 plus the 2 added in Task 6 and the 1 added in Task 7; 10 from `CategoryRepositoryImplTest`; 21 from
+`CategoryServiceImplTest`; 5 from `CategoryControllerTest`.
 
 - [ ] **Step 9: Commit**
 
@@ -2522,9 +2973,9 @@ docker exec postgres psql -U catalog -d catalog_db -c "\d category"
 docker exec postgres psql -U catalog -d catalog_db -c "select version, description, success from flyway_schema_history;"
 ```
 
-Expected: the ten columns, the `category_pkey`, `category_path_key`, `category_parent_id_slug_key` and
-`category_parent_id_fkey` constraints and `idx_category_parent_id`; and one history row,
-`1 | create category table | t`.
+Expected: the nine columns, with **no `path` among them**; the `category_pkey`, `category_parent_id_slug_key` and
+`category_parent_id_fkey` constraints and **no `idx_category_parent_id`**, because finding 8 measured the unique
+constraint's own index serving the parent lookup; and one history row, `1 | create category table | t`.
 
 Hibernate booting at all is the `ddl-auto: validate` check passing, which is what proves the entity and the migration
 agree.
@@ -2595,7 +3046,10 @@ regex.
 
 - [ ] **Step 7: Criterion 5 — a subtree read returns the node and every descendant**
 
-First build a subtree with a prefix-sharing sibling in it, which is finding 8's case:
+First build a subtree with a prefix-sharing sibling in it. Under a stored `path` this was the case a `like
+'keyboards%'` scan got wrong; here `keyboards-2` is a different row with a different `parent_id` and the recursive CTE
+never reaches it, so the check is confirming a structural property rather than guarding a string comparison — which is
+the whole reason for the redesign, and therefore still worth measuring:
 
 ```
 java .scratch/Probe.java POST http://localhost:8081/api/v1/categories '{"parentId":"ACCESSORIES_ID","slug":"cables"}'
@@ -2617,9 +3071,16 @@ java .scratch/Probe.java GET http://localhost:8080/catalog/api/v1/categories/key
 Expected: `200` with two elements, `keyboards/accessories` and `keyboards/accessories/cables`. This is the exact URL in
 spec section 3.
 
-- [ ] **Step 8: Criterion 6 — a move recomputes the whole subtree**
+- [ ] **Step 8: Criterion 6 — a move recomputes the whole subtree, by writing one row**
 
-Run:
+First record what the descendants look like before the move, so that "only one row was written" can be shown and not
+just claimed:
+
+```
+docker exec postgres psql -U catalog -d catalog_db -c "select slug, updated_at from category order by slug;"
+```
+
+Keep that output. Then:
 
 ```
 java .scratch/Probe.java POST http://localhost:8081/api/v1/categories '{"slug":"peripherals"}'
@@ -2632,6 +3093,17 @@ Expected from the `PUT`: `200 {...,"path":"peripherals/keyboards",...}`
 Expected from the `GET`: `200` with four elements — `peripherals`, `peripherals/keyboards`,
 `peripherals/keyboards/accessories`, `peripherals/keyboards/accessories/cables`.
 
+Now the measurement this task exists for. Run the same query again:
+
+```
+docker exec postgres psql -U catalog -d catalog_db -c "select slug, updated_at from category order by slug;"
+```
+
+Expected: `keyboards` has a new `updated_at` and **`accessories` and `cables` have exactly the `updated_at` they had
+before the move**. Two descendants whose returned paths both changed and whose rows were not touched is criterion 6
+being met without a single descendant write, which is what the design buys and what the old materialised-path version
+of this plan could not have shown.
+
 Then confirm the sibling did not move:
 
 ```
@@ -2639,6 +3111,32 @@ java .scratch/Probe.java GET http://localhost:8081/api/v1/categories/keyboards-2
 ```
 
 Expected: `200` with one element, `keyboards-2`.
+
+- [ ] **Step 8b: A move into the moved node's own subtree is a 409**
+
+Finding B, live. `keyboards` now sits under `peripherals`; move `peripherals` under `accessories`, which is two levels
+below it:
+
+```
+java .scratch/Probe.java PUT http://localhost:8081/api/v1/categories/PERIPHERALS_ID '{"parentId":"ACCESSORIES_ID","slug":"peripherals"}'
+```
+
+Expected:
+
+```
+409 {"type":"about:blank","title":"Conflict","status":409,
+     "detail":"The request conflicts with the current state of the resource","instance":"/api/v1/categories/..."}
+```
+
+Then confirm nothing moved:
+
+```
+java .scratch/Probe.java GET http://localhost:8081/api/v1/categories/peripherals
+```
+
+Expected: the same four elements as before the rejected `PUT`. A response at all — rather than a request that never
+returns — is the guard working; without it this call walks `peripherals → accessories → keyboards → peripherals`
+forever.
 
 - [ ] **Step 9: Criterion 4 — deleting a category with children is rejected**
 
@@ -2659,17 +3157,27 @@ Then confirm a leaf does delete, and that the row is gone:
 
 ```
 java .scratch/Probe.java DELETE http://localhost:8081/api/v1/categories/CABLES_ID
-docker exec postgres psql -U catalog -d catalog_db -c "select path from category order by path;"
+docker exec postgres psql -U catalog -d catalog_db -c "
+with recursive tree as (
+    select id, parent_id, slug::text as path from category where parent_id is null
+    union all
+    select c.id, c.parent_id, tree.path || '/' || c.slug from category c join tree on c.parent_id = tree.id
+)
+select path from tree order by path;"
 ```
 
 Expected: `204` with an empty body, and four rows — `keyboards-2`, `peripherals`, `peripherals/keyboards`,
 `peripherals/keyboards/accessories`.
 
+The path has to be built in the query because there is no column to select. That downward CTE is the mirror of the
+service's upward walk, and running it here is also a check that the two agree: the paths `psql` prints must be exactly
+the ones the API returned in Steps 7 and 8.
+
 Finally confirm the database would have refused it even without the service check, which is the half of criterion 4 that
 survives a caller who bypasses the API:
 
 ```
-docker exec postgres psql -U catalog -d catalog_db -c "delete from category where path = 'peripherals';"
+docker exec postgres psql -U catalog -d catalog_db -c "delete from category where parent_id is null and slug = 'peripherals';"
 ```
 
 Expected:
@@ -2691,7 +3199,7 @@ Expected from `git status --short`: empty. Nothing in `.scratch/` may reach the 
 
 Run: `mvn -B clean verify`
 
-Expected: `BUILD SUCCESS`, `Tests run: 37, Failures: 0, Errors: 0, Skipped: 0` in `catalog-service`, `Tests run: 1` in
+Expected: `BUILD SUCCESS`, `Tests run: 43, Failures: 0, Errors: 0, Skipped: 0` in `catalog-service`, `Tests run: 1` in
 `gateway`, all five modules `SUCCESS`.
 
 - [ ] **Step 12: Confirm the standing rules hold across the diff**
@@ -2700,13 +3208,22 @@ Run:
 
 ```
 grep -rn "@Service\|@Component\|@Repository" catalog-service/src/main/java
-grep -rn "@Query\|nativeQuery\|createQuery" catalog-service/src/main/java
 grep -rn "//\|/\*" catalog-service/src/main/java catalog-service/src/main/resources
 grep -rln "CreateCategory\|UpdateCategory\|MoveCategory" catalog-service/src
+grep -rn "@Query" catalog-service/src/main/java
+grep -rn "createQuery\|CriteriaBuilder" catalog-service/src/main/java
 ```
 
-Expected: the first three print nothing at all, and the fourth prints nothing. `@RestController` contains neither
-`@Service` nor `@Component` as a substring, so a hit on the first is a real breach.
+Expected: the first three print nothing at all. `@RestController` contains neither `@Service` nor `@Component` as a
+substring, so a hit on the first is a real breach.
+
+The fourth must print exactly one hit, `CategoryJpaRepository.findSubtree`, and that hit must carry
+`nativeQuery = true`. `@Query` is allowed only where a derived method cannot express the query, and a `with recursive`
+CTE is such a query; but without `nativeQuery` the same text would be Hibernate's HQL extension rather than JPQL, and
+provider-specific query text is what the rule actually forbids. A second `@Query`, or this one without `nativeQuery`,
+is a breach.
+
+The fifth must print nothing: no Criteria API, no string fragments.
 
 Then:
 
@@ -2714,9 +3231,9 @@ Then:
 git log --oneline master..HEAD
 ```
 
-Expected: ten commits — one `docs(plan): implementation plan for #15`, then nine `feat(catalog): ...`, one per red-green
-cycle: two from Task 2, one each from Tasks 3, 4 and 5, two from Task 6, one each from Tasks 7 and 8. Every one carries
-a `Refs #15` footer, and none carries a `Co-Authored-By` trailer or a generated-with footer.
+Expected: eleven commits — one `docs(plan): implementation plan for #15`, then ten `feat(catalog): ...`, one per
+red-green cycle: two from Task 2, one each from Tasks 3, 4 and 5, two from Task 6, two from Task 7, one from Task 8.
+Every one carries a `Refs #15` footer, and none carries a `Co-Authored-By` trailer or a generated-with footer.
 
 - [ ] **Step 13: Open the pull request**
 
@@ -2728,12 +3245,19 @@ See "Pull request" below.
 
 | # | Acceptance criterion from issue #15                                                                | Task    | Step                     | Red                                                                                                                                           | Green                                                                                                                                                                                                                                                                                                                                             |
 |---|----------------------------------------------------------------------------------------------------|---------|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Creating a child under `keyboards` with slug `accessories` stores `path = 'keyboards/accessories'` | 4, 9    | 4.2, 4.5, 9.4            | `cannot find symbol: class CategoryServiceImpl` at `testCompile`                                                                              | `givenAParent_whenCreateCategory_thenThePathIsTheParentPathAndTheSlug` passes; live `POST` returns `201` with `"path":"keyboards/accessories"`                                                                                                                                                                                                    |
+| 1 | Creating a child under `keyboards` with slug `accessories` stores `path = 'keyboards/accessories'` | 4, 9    | 4.2, 4.5, 9.4            | `cannot find symbol: class CategoryServiceImpl` at `testCompile`                                                                              | `givenAParent_whenCreateCategory_thenThePathIsTheParentPathAndTheSlug` and `givenANestedParent_whenCreateCategory_thenThePathIsBuiltByWalkingEveryAncestor` pass; live `POST` returns `201` with `"path":"keyboards/accessories"`. **Derived, not stored** — see the note below                                                                    |
 | 2 | Creating a second root with an existing slug returns 409                                           | 2, 9    | 2.A.8, 9.5               | `psql` accepts the insert before the migration adds `unique nulls not distinct (parent_id, slug)`                                             | `ERROR: duplicate key value violates unique constraint "category_parent_id_slug_key"` with `Key (parent_id, slug)=(null, keyboards)`; live `POST` returns `409` with no constraint name in the body. No Java: integrity stays in the database and #14's advice already maps `DataIntegrityViolationException`                                     |
 | 3 | A slug containing Arabic or uppercase returns 400                                                  | 8, 9    | 8.2, 9.6                 | Before `CategoryRequest` exists the endpoint does not exist; with the record but no `@Pattern`, `{"slug":"Keyboards"}` is accepted with `201` | live `POST` returns `400` with `errors:[{"field":"slug","message":"must match \"[a-z0-9-]+\""}]` for both `Keyboards` and `لوحات`. **No unit test**: asserting that `@Pattern` rejects Arabic is testing Hibernate Validator, which the spec forbids. Finding 12 measured the pattern itself separately                                           |
 | 4 | Deleting a category that has children is rejected                                                  | 6, 2, 9 | 6.A.2, 6.A.4, 2.A.8, 9.9 | `cannot find symbol: class CategoryHasChildrenException` at `testCompile`; and `psql` deleting a parent before the foreign key exists         | `givenACategoryWithDescendants_whenDeleteCategory_thenCategoryHasChildren` and `givenALeaf_whenDeleteCategory_thenItIsDeleted` pass; live `DELETE` returns `409`, a leaf returns `204`, and `psql` still refuses with `violates RESTRICT setting of foreign key constraint "category_parent_id_fkey"`                                             |
-| 5 | Fetching a subtree returns the node and every descendant                                           | 5, 9    | 5.2, 5.4, 9.7            | `cannot find symbol: method findSubtree(java.lang.String)` at `testCompile`                                                                   | four tests pass, including `givenASiblingSharingThePrefix_whenFindSubtree_thenTheSiblingIsNotADescendant`; live `GET /api/v1/categories/keyboards` returns `keyboards`, `keyboards/accessories`, `keyboards/accessories/cables` and **not** `keyboards-2`, and the same through the gateway at `/catalog/api/v1/categories/keyboards/accessories` |
-| 6 | Moving a category recomputes `path` for it and every descendant                                    | 7, 9    | 7.2, 7.4, 9.8            | `cannot find symbol: method updateCategory(java.lang.String,...)` at `testCompile`                                                            | six tests pass, including `givenANewParent_whenUpdateCategory_thenEveryDescendantPathIsRecomputed`; live `PUT` returns `"path":"peripherals/keyboards"` and the subsequent subtree read returns all four recomputed paths while `keyboards-2` is untouched                                                                                        |
+| 5 | Fetching a subtree returns the node and every descendant                                           | 5, 9    | 5.2, 5.4, 9.7            | `cannot find symbol: method findSubtree(java.lang.String)` at `testCompile`                                                                   | five tests pass, including `givenANodeWithDescendants_whenFindSubtree_thenEveryPathIsRebuiltFromTheParentChain`; live `GET /api/v1/categories/keyboards` returns `keyboards`, `keyboards/accessories`, `keyboards/accessories/cables` and **not** `keyboards-2`, and the same through the gateway at `/catalog/api/v1/categories/keyboards/accessories` |
+| 6 | Moving a category recomputes `path` for it and every descendant                                    | 7, 9    | 7.A.2, 7.A.4, 9.8        | `cannot find symbol: method updateCategory(java.lang.String,...)` at `testCompile`; then, for the cycle guard, a test that does not terminate | eight tests pass, including `givenANewParent_whenUpdateCategory_thenOnlyTheMovedRowIsWritten` and the three `CategoryCycleException` ones; live `PUT` returns `"path":"peripherals/keyboards"`, the subsequent subtree read returns all four recomputed paths, `keyboards-2` is untouched, and `psql` shows the descendants' `updated_at` unchanged |
+
+Criteria 1 and 6 say `path` is *stored* and *recomputed*, and neither happens. There is no `path` column: the value is
+derived from `parent_id` on every read and returned on `CategoryResponse`. Everything observable through the API is
+exactly what the criteria describe — `POST` returns `"path":"keyboards/accessories"`, and after a `PUT` every
+descendant reads back under its new prefix — so both criteria are met as written from the caller's side, which is the
+side that matters. Step 9.8 is deliberately built so a reviewer can see the difference: the descendants' paths change
+and their rows are not written. The reasoning is in the Design revision note at the top of this plan.
 
 Criteria 2 and 4 each appear twice on purpose. Both are integrity rules the spec puts in the database, so the migration
 is where they are really enforced and Task 2 measures them there with `psql`. Criterion 4 additionally gets a service
@@ -2752,10 +3276,10 @@ only a live request shows both.
 
 ## Pull request
 
-Title: `feat(catalog): add category table with materialised path tree endpoints (#15)`
+Title: `feat(catalog): add category tree with derived paths (#15)`
 
 Body lists each of the six acceptance criteria with the command and the output that verified it, and ends with
-`Closes #15`. Merge with rebase, never squash, so the nine per-cycle commits survive.
+`Closes #15`. Merge with rebase, never squash, so the ten per-cycle commits survive.
 
 The body must also carry the four places where this increment does not match what a reviewer would predict from reading
 issue #15 and the spec side by side, because all four will otherwise be flagged:
@@ -2766,9 +3290,16 @@ issue #15 and the spec side by side, because all four will otherwise be flagged:
   value to put in them. `created_at` and `updated_at` are `not null` and Hibernate-generated. `ddl-auto: validate`
   accepts the two unmapped columns — measured against `postgres:18-alpine` with a real `SessionFactory` — so they cost
   nothing and are ready for the increment that brings a principal.
-- **A move into a category's own subtree is not prevented.** `PUT` moving `keyboards` under `keyboards/accessories` will
-  recompute paths into a cycle. No acceptance criterion covers it, nothing in the issue's DDL stops it, and `CLAUDE.md`
-  says to build only what the issue asks for, so it is left unbuilt and named here instead. It is worth its own issue.
+- **There is no `path` column, although issue #15's `### Design` block shows one.** The column is derived data the
+  database cannot enforce, and the issue's own acceptance criteria are all satisfied without it — `path` is built from
+  `parent_id` on read and returned on `CategoryResponse`. What this buys is visible in the diff: a move writes one row
+  instead of the whole subtree, and there is no state that can drift from the tree it describes. The `unique nulls not
+  distinct (parent_id, slug)` constraint enforces sibling uniqueness, which is what the issue's `unique (path)` was
+  reaching for. Full reasoning in the Design revision note in the plan.
+- **A move into a category's own subtree is refused with 409.** Nothing in the issue asks for this, and `CLAUDE.md` says
+  to build only what the issue asks for. It is here anyway because it is not optional scope under this design: the
+  ancestor walk that builds a path follows `parent_id` upward, so a cycle makes it loop forever rather than produce a
+  wrong answer. The guard is one comparison inside a loop that already exists, and it costs no extra query.
 - **`org.mapstruct:mapstruct` was missing from `catalog-service/pom.xml`.** The root POM manages the version and puts
   `mapstruct-processor` on `annotationProcessorPaths`, but the runtime artifact was never a dependency of the module, so
   `org.mapstruct.Mapper` did not resolve. One dependency added, no `<version>`.
@@ -2781,10 +3312,11 @@ issue #15 and the spec side by side, because all four will otherwise be flagged:
 
 And the two design readings the issue leaves open, stated so the reviewer can reject them cheaply if they disagree:
 
-- **The subtree response is a flat `List<CategoryResponse>` ordered by `path`, not a nested tree.** "Returns the node
+- **The subtree response is a flat `List<CategoryResponse>` ordered by `depth, sort_order, slug`, not a nested tree.** "Returns the node
   and every descendant" is satisfied exactly by the list; a nested `children` structure is an algorithm, a second record
-  and a second set of tests that nothing asks for. `sort_order` is stored and returned but does not order the flat list,
-  because sorting a mixed-depth list by a sibling-ordering column interleaves the levels.
+  and a second set of tests that nothing asks for. The CTE orders by `depth` first, so a parent always precedes its
+  children, which is what lets the service assign each node's path from its parent's in one pass; `sort_order` and then
+  `slug` break ties within a depth, so the order is total and repeatable.
 - **Reads address a category by path and writes address it by id.** `GET /api/v1/categories/{*path}` matches the spec's
   own URL example. `PUT` and `DELETE` take `/{id}`, because a `PUT` that moves a category changes the very path that
   would have addressed it. One `CategoryRequest` serves both `POST` and `PUT`; there is no `CreateCategoryRequest` and

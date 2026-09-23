@@ -3,6 +3,7 @@ package com.thedarkhorse.catalog.controller;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
 import com.thedarkhorse.catalog.model.Category;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.service.CategoryService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -28,7 +29,17 @@ class CategoryControllerTest {
 
     private final CategoryService service = mock(CategoryService.class);
     private final CategoryMapper mapper = new CategoryMapperImpl();
-    private final CategoryController controller = new CategoryController(service, mapper);
+    private final CategoryController controller = new CategoryController(service, mapper, new CategoryPaths());
+
+    @Test
+    void givenNoPath_whenFindCategories_thenTheWholeTreeIsReturned() {
+        when(service.findCategories()).thenReturn(List.of(model()));
+
+        ResponseEntity<List<CategoryResponse>> response = controller.findCategories();
+
+        assertThat(response.getBody()).extracting(CategoryResponse::path).containsExactly(PATH);
+        verify(service).findCategories();
+    }
 
     @Test
     void givenACapturedPathWithALeadingSlash_whenFindSubtree_thenTheServiceIsCalledWithoutIt() {
@@ -91,6 +102,13 @@ class CategoryControllerTest {
     }
 
     private Category model() {
-        return new Category(ID, PARENT_ID, SLUG, PATH, SORT_ORDER, true);
+        Category model = new Category();
+        model.setId(ID);
+        model.setParentId(PARENT_ID);
+        model.setSlug(SLUG);
+        model.setPath(PATH);
+        model.setSortOrder(SORT_ORDER);
+        model.setActive(true);
+        return model;
     }
 }

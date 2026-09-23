@@ -12,6 +12,8 @@ import java.util.List;
 @Mapper
 public interface CategoryMapper {
 
+    @Mapping(target = "path", ignore = true)
+    @Mapping(target = "effectiveActive", ignore = true)
     Category toModel(CategoryEntity entity);
 
     List<Category> toModels(List<CategoryEntity> entities);
@@ -22,6 +24,7 @@ public interface CategoryMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "path", ignore = true)
+    @Mapping(target = "effectiveActive", ignore = true)
     Category toModel(CategoryRequest request);
 
     CategoryResponse toResponse(Category category);

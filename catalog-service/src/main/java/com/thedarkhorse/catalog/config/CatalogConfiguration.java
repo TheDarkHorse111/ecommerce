@@ -3,6 +3,7 @@ package com.thedarkhorse.catalog.config;
 import com.thedarkhorse.catalog.jpa.CategoryJpaRepository;
 import com.thedarkhorse.catalog.mapper.CategoryMapper;
 import com.thedarkhorse.catalog.mapper.CategoryMapperImpl;
+import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import com.thedarkhorse.catalog.repository.CategoryRepositoryImpl;
 import com.thedarkhorse.catalog.service.CategoryService;
@@ -24,7 +25,12 @@ public class CatalogConfiguration {
     }
 
     @Bean
-    public CategoryService categoryService(CategoryRepository repository) {
-        return new CategoryServiceImpl(repository);
+    public CategoryPaths categoryPaths() {
+        return new CategoryPaths();
+    }
+
+    @Bean
+    public CategoryService categoryService(CategoryRepository repository, CategoryPaths paths) {
+        return new CategoryServiceImpl(repository, paths);
     }
 }
