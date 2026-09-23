@@ -8,13 +8,7 @@ import com.thedarkhorse.catalog.path.CategoryPaths;
 import com.thedarkhorse.catalog.repository.CategoryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 public class CategoryServiceImpl implements CategoryService {
 
@@ -147,9 +141,10 @@ public class CategoryServiceImpl implements CategoryService {
             if (parent != null) {
                 category.setPath(paths.findPathUnder(parent.getPath(), category.getSlug()));
                 category.setEffectiveActive(parent.getEffectiveActive() && category.getActive());
+                parent.getChildren().add(category);
             }
             byId.put(category.getId(), category);
         });
-        return categories;
+        return roots;
     }
 }

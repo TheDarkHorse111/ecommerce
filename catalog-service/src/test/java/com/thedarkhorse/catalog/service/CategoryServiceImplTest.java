@@ -10,6 +10,9 @@ import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 
@@ -51,7 +54,7 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, ROOT_ID, CHILD_SLUG, null, 0, true, null));
+        Category created = service.createCategory(request(ROOT_ID, CHILD_SLUG));
 
         assertThat(created.getPath()).isEqualTo(CHILD_PATH);
     }
@@ -62,7 +65,7 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, CHILD_ID, GRANDCHILD_SLUG, null, 0, true, null));
+        Category created = service.createCategory(request(CHILD_ID, GRANDCHILD_SLUG));
 
         assertThat(created.getPath()).isEqualTo(GRANDCHILD_PATH);
     }
@@ -71,7 +74,7 @@ class CategoryServiceImplTest {
     void givenNoParent_whenCreateCategory_thenThePathIsTheSlugAloneAndNoAncestorIsRead() {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, null, ROOT_SLUG, null, 0, true, null));
+        Category created = service.createCategory(request(ROOT_SLUG));
 
         assertThat(created.getPath()).isEqualTo(ROOT_PATH);
         verify(repository, never()).findById(any());
@@ -82,7 +85,7 @@ class CategoryServiceImplTest {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
         ThrowingCallable throwingCallable =
-                () -> service.createCategory(new Category(null, MISSING_ID, CHILD_SLUG, null, 0, true, null));
+                () -> service.createCategory(request(MISSING_ID, CHILD_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
         verify(repository, never()).save(any());
@@ -92,7 +95,11 @@ class CategoryServiceImplTest {
     void givenNoSortOrderAndNoActive_whenCreateCategory_thenTheDdlDefaultsAreApplied() {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, null, ROOT_SLUG, null, null, null, null));
+        Category request = request(ROOT_SLUG);
+        request.setSortOrder(null);
+        request.setActive(null);
+
+        Category created = service.createCategory(request);
 
         assertThat(created.getSortOrder()).isZero();
         assertThat(created.getActive()).isTrue();
@@ -102,7 +109,7 @@ class CategoryServiceImplTest {
     void givenSeveralRoots_whenFindCategories_thenEveryTreeCarriesPathsFromItsOwnRoot() {
         when(repository.findAll()).thenReturn(List.of(root(), newParent(), child(), grandchild()));
 
-        List<Category> categories = service.findCategories();
+        List<Category> categories = flatten(service.findCategories());
 
         assertThat(categories).extracting(Category::getPath)
                 .containsExactly(ROOT_PATH, NEW_PARENT_SLUG, CHILD_PATH, GRANDCHILD_PATH);
@@ -112,10 +119,24 @@ class CategoryServiceImplTest {
     void givenAnInactiveRoot_whenFindCategories_thenItsDescendantsAreNotEffectivelyActive() {
         when(repository.findAll()).thenReturn(List.of(inactiveRoot(), child()));
 
-        List<Category> categories = service.findCategories();
+        List<Category> categories = flatten(service.findCategories());
 
         assertThat(categories).extracting(Category::getActive).containsExactly(false, true);
         assertThat(categories).extracting(Category::getEffectiveActive).containsExactly(false, false);
+    }
+
+    @Test
+    void givenSeveralRoots_whenFindCategories_thenOnlyRootsAreReturnedWithTheirDescendantsNested() {
+        when(repository.findAll()).thenReturn(List.of(root(), newParent(), child(), grandchild()));
+
+        List<Category> categories = service.findCategories();
+
+        assertThat(categories).extracting(Category::getSlug).containsExactly(ROOT_SLUG, NEW_PARENT_SLUG);
+        List<Category> children = categories.getFirst().getChildren();
+        assertThat(children).extracting(Category::getSlug).containsExactly(CHILD_SLUG);
+        assertThat(children.getFirst().getChildren()).extracting(Category::getSlug)
+                .containsExactly(GRANDCHILD_SLUG);
+        assertThat(categories.get(1).getChildren()).isEmpty();
     }
 
     @Test
@@ -123,7 +144,7 @@ class CategoryServiceImplTest {
         when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
         when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(root(), child(), grandchild()));
 
-        List<Category> subtree = service.findSubtree(ROOT_PATH);
+        List<Category> subtree = flatten(service.findSubtree(ROOT_PATH));
 
         assertThat(subtree).extracting(Category::getPath)
                 .containsExactly(ROOT_PATH, CHILD_PATH, GRANDCHILD_PATH);
@@ -134,7 +155,7 @@ class CategoryServiceImplTest {
         when(repository.findByParentIdAndSlug(null, ROOT_SLUG)).thenReturn(Optional.of(root()));
         when(repository.findSubtree(ROOT_ID)).thenReturn(List.of(root(), inactiveChild(), grandchild()));
 
-        List<Category> subtree = service.findSubtree(ROOT_PATH);
+        List<Category> subtree = flatten(service.findSubtree(ROOT_PATH));
 
         assertThat(subtree).extracting(Category::getActive).containsExactly(true, false, true);
         assertThat(subtree).extracting(Category::getEffectiveActive).containsExactly(true, false, false);
@@ -146,7 +167,7 @@ class CategoryServiceImplTest {
         when(repository.findByParentIdAndSlug(ROOT_ID, CHILD_SLUG)).thenReturn(Optional.of(child()));
         when(repository.findSubtree(CHILD_ID)).thenReturn(List.of(child(), grandchild()));
 
-        List<Category> subtree = service.findSubtree(CHILD_PATH);
+        List<Category> subtree = flatten(service.findSubtree(CHILD_PATH));
 
         assertThat(subtree).extracting(Category::getActive).containsExactly(true, true);
         assertThat(subtree).extracting(Category::getEffectiveActive).containsExactly(false, false);
@@ -158,7 +179,7 @@ class CategoryServiceImplTest {
         when(repository.findByParentIdAndSlug(ROOT_ID, CHILD_SLUG)).thenReturn(Optional.of(child()));
         when(repository.findSubtree(CHILD_ID)).thenReturn(List.of(child(), grandchild()));
 
-        List<Category> subtree = service.findSubtree(CHILD_PATH);
+        List<Category> subtree = flatten(service.findSubtree(CHILD_PATH));
 
         assertThat(subtree).extracting(Category::getPath).containsExactly(CHILD_PATH, GRANDCHILD_PATH);
         verify(repository).findSubtree(CHILD_ID);
@@ -196,7 +217,7 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(inactiveRoot()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, ROOT_ID, CHILD_SLUG, null, 0, true, null));
+        Category created = service.createCategory(request(ROOT_ID, CHILD_SLUG));
 
         assertThat(created.getActive()).isTrue();
         assertThat(created.getEffectiveActive()).isFalse();
@@ -206,7 +227,7 @@ class CategoryServiceImplTest {
     void givenNoParent_whenCreateCategory_thenTheCategoryIsEffectivelyActive() {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category created = service.createCategory(new Category(null, null, ROOT_SLUG, null, 0, true, null));
+        Category created = service.createCategory(request(ROOT_SLUG));
 
         assertThat(created.getEffectiveActive()).isTrue();
     }
@@ -217,8 +238,7 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(inactiveRoot()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category updated = service.updateCategory(
-                CHILD_ID, new Category(null, ROOT_ID, CHILD_SLUG, null, 0, true, null));
+        Category updated = service.updateCategory(CHILD_ID, request(ROOT_ID, CHILD_SLUG));
 
         assertThat(updated.getActive()).isTrue();
         assertThat(updated.getEffectiveActive()).isFalse();
@@ -258,8 +278,7 @@ class CategoryServiceImplTest {
         when(repository.findById(NEW_PARENT_ID)).thenReturn(Optional.of(newParent()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category moved = service.updateCategory(
-                ROOT_ID, new Category(null, NEW_PARENT_ID, ROOT_SLUG, null, 0, true, null));
+        Category moved = service.updateCategory(ROOT_ID, request(NEW_PARENT_ID, ROOT_SLUG));
 
         assertThat(moved.getId()).isEqualTo(ROOT_ID);
         assertThat(moved.getParentId()).isEqualTo(NEW_PARENT_ID);
@@ -272,8 +291,7 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category renamed = service.updateCategory(
-                ROOT_ID, new Category(null, null, RENAMED_SLUG, null, 0, true, null));
+        Category renamed = service.updateCategory(ROOT_ID, request(RENAMED_SLUG));
 
         assertThat(renamed.getPath()).isEqualTo(RENAMED_SLUG);
         assertThat(renamed.getSlug()).isEqualTo(RENAMED_SLUG);
@@ -286,8 +304,11 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Category updated = service.updateCategory(
-                ROOT_ID, new Category(null, null, ROOT_SLUG, null, null, null, null));
+        Category request = request(ROOT_SLUG);
+        request.setSortOrder(null);
+        request.setActive(null);
+
+        Category updated = service.updateCategory(ROOT_ID, request);
 
         assertThat(updated.getSortOrder()).isZero();
         assertThat(updated.getActive()).isTrue();
@@ -297,8 +318,8 @@ class CategoryServiceImplTest {
     void givenAnUnknownId_whenUpdateCategory_thenCategoryNotFound() {
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                MISSING_ID, new Category(null, null, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(MISSING_ID, request(ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
     }
@@ -308,8 +329,8 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.findById(MISSING_ID)).thenReturn(Optional.empty());
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID, new Category(null, MISSING_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID, request(MISSING_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryNotFoundException.class);
         verify(repository, never()).save(any());
@@ -319,8 +340,8 @@ class CategoryServiceImplTest {
     void givenItselfAsTheNewParent_whenUpdateCategory_thenCategoryCycle() {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID, new Category(null, ROOT_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID, request(ROOT_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
@@ -331,8 +352,8 @@ class CategoryServiceImplTest {
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID, request(CHILD_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
@@ -344,8 +365,8 @@ class CategoryServiceImplTest {
         when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
         when(repository.findById(GRANDCHILD_ID)).thenReturn(Optional.of(grandchild()));
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID, new Category(null, GRANDCHILD_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID, request(GRANDCHILD_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
@@ -357,8 +378,8 @@ class CategoryServiceImplTest {
         when(repository.findById(CHILD_ID)).thenReturn(Optional.of(child()));
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID_UPPERCASE, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID_UPPERCASE, request(CHILD_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
@@ -367,40 +388,78 @@ class CategoryServiceImplTest {
     @Test
     @Timeout(value = 2, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void givenAnAncestorChainThatAlreadyLoops_whenUpdateCategory_thenCategoryCycle() {
-        Category looping = new Category(CHILD_ID, GRANDCHILD_ID, CHILD_SLUG, null, 0, true, null);
-        Category loopingBack = new Category(GRANDCHILD_ID, CHILD_ID, GRANDCHILD_SLUG, null, 0, true, null);
+        Category looping = child();
+        looping.setParentId(GRANDCHILD_ID);
+        Category loopingBack = grandchild();
+        loopingBack.setParentId(CHILD_ID);
         when(repository.findById(ROOT_ID)).thenReturn(Optional.of(root()));
         when(repository.findById(CHILD_ID)).thenReturn(Optional.of(looping));
         when(repository.findById(GRANDCHILD_ID)).thenReturn(Optional.of(loopingBack));
 
-        ThrowingCallable throwingCallable = () -> service.updateCategory(
-                ROOT_ID, new Category(null, CHILD_ID, ROOT_SLUG, null, 0, true, null));
+        ThrowingCallable throwingCallable =
+                () -> service.updateCategory(ROOT_ID, request(CHILD_ID, ROOT_SLUG));
 
         assertThatThrownBy(throwingCallable).isInstanceOf(CategoryCycleException.class);
         verify(repository, never()).save(any());
     }
 
+    private List<Category> flatten(List<Category> roots) {
+        List<Category> flat = new ArrayList<>();
+        Deque<Category> queue = new ArrayDeque<>(roots);
+        while (!queue.isEmpty()) {
+            Category category = queue.removeFirst();
+            flat.add(category);
+            queue.addAll(category.getChildren());
+        }
+        return flat;
+    }
+
+    private Category request(String slug) {
+        return request(null, slug);
+    }
+
+    private Category request(String parentId, String slug) {
+        Category request = new Category();
+        request.setParentId(parentId);
+        request.setSlug(slug);
+        request.setSortOrder(0);
+        request.setActive(true);
+        return request;
+    }
+
     private Category root() {
-        return new Category(ROOT_ID, null, ROOT_SLUG, null, 0, true, null);
+        Category root = request(ROOT_SLUG);
+        root.setId(ROOT_ID);
+        return root;
     }
 
     private Category child() {
-        return new Category(CHILD_ID, ROOT_ID, CHILD_SLUG, null, 0, true, null);
+        Category child = request(ROOT_ID, CHILD_SLUG);
+        child.setId(CHILD_ID);
+        return child;
     }
 
     private Category grandchild() {
-        return new Category(GRANDCHILD_ID, CHILD_ID, GRANDCHILD_SLUG, null, 0, true, null);
-    }
-
-    private Category inactiveRoot() {
-        return new Category(ROOT_ID, null, ROOT_SLUG, null, 0, false, null);
-    }
-
-    private Category inactiveChild() {
-        return new Category(CHILD_ID, ROOT_ID, CHILD_SLUG, null, 0, false, null);
+        Category grandchild = request(CHILD_ID, GRANDCHILD_SLUG);
+        grandchild.setId(GRANDCHILD_ID);
+        return grandchild;
     }
 
     private Category newParent() {
-        return new Category(NEW_PARENT_ID, null, NEW_PARENT_SLUG, null, 0, true, null);
+        Category newParent = request(NEW_PARENT_SLUG);
+        newParent.setId(NEW_PARENT_ID);
+        return newParent;
+    }
+
+    private Category inactiveRoot() {
+        Category inactiveRoot = root();
+        inactiveRoot.setActive(false);
+        return inactiveRoot;
+    }
+
+    private Category inactiveChild() {
+        Category inactiveChild = child();
+        inactiveChild.setActive(false);
+        return inactiveChild;
     }
 }

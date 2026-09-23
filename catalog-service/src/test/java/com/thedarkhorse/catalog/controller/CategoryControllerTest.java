@@ -102,6 +102,13 @@ class CategoryControllerTest {
     }
 
     private Category model() {
-        return new Category(ID, PARENT_ID, SLUG, PATH, SORT_ORDER, true, null);
+        Category model = new Category();
+        model.setId(ID);
+        model.setParentId(PARENT_ID);
+        model.setSlug(SLUG);
+        model.setPath(PATH);
+        model.setSortOrder(SORT_ORDER);
+        model.setActive(true);
+        return model;
     }
 }

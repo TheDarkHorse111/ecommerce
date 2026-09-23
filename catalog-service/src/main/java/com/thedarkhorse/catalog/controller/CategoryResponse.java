@@ -1,5 +1,7 @@
 package com.thedarkhorse.catalog.controller;
 
+import java.util.List;
+
 public record CategoryResponse(
         String id,
         String parentId,
@@ -7,6 +9,7 @@ public record CategoryResponse(
         String path,
         Integer sortOrder,
         Boolean active,
-        Boolean effectiveActive
+        Boolean effectiveActive,
+        List<CategoryResponse> children
 ) {
 }

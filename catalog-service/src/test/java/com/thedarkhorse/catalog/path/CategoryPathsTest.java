@@ -59,11 +59,19 @@ class CategoryPathsTest {
         assertThat(paths.withoutLeadingSeparator(CHILD_PATH)).isEqualTo(CHILD_PATH);
     }
 
+    private Category category(String slug) {
+        Category category = new Category();
+        category.setSlug(slug);
+        category.setSortOrder(0);
+        category.setActive(true);
+        return category;
+    }
+
     private Category root() {
-        return new Category(null, null, ROOT_SLUG, null, 0, true, null);
+        return category(ROOT_SLUG);
     }
 
     private Category child() {
-        return new Category(null, null, CHILD_SLUG, null, 0, true, null);
+        return category(CHILD_SLUG);
     }
 }
